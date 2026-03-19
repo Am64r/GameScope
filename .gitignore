@@ -27,3 +27,11 @@ frontend/node_modules/
 package-lock.json
 
 .env
+
+# Raw datasets (too large for git)
+src/dataset/raw/
+src/dataset
+
+# Notebooks & local analysis
+*.ipynb
+DATASET.md
