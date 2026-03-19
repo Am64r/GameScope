@@ -1,16 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap');
+
+:root {
+  --bg-deep: #0d0c08;
+  --bg-surface: #1a1810;
+  --bg-card: #1e1c14;
+  --amber: #f0a000;
+  --amber-dim: #b87800;
+  --amber-glow: rgba(240, 160, 0, 0.15);
+  --coin-gold: #ffd700;
+  --hot-pink: #ff2d75;
+  --hot-pink-dim: #cc2460;
+  --text-primary: #e8dcc8;
+  --text-secondary: #9a8e78;
+  --text-muted: #5a5240;
+  --scanline: rgba(0, 0, 0, 0.06);
+  --border: #2e2a20;
+}
+
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 
 body {
-  font-family: 'Open Sans', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: 'Space Mono', monospace;
+  overflow-x: hidden;
 }
 
 #root {
-  width: 100%;
   min-height: 100vh;
+  position: relative;
+}
+
+/* ── CRT scanline overlay ───────────────────────────────────────────── */
+
+.crt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    var(--scanline) 0px,
+    var(--scanline) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* ── Selection color ────────────────────────────────────────────────── */
+
+::selection {
+  background: var(--hot-pink);
+  color: var(--bg-deep);
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-deep);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
