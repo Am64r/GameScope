@@ -4,39 +4,25 @@ TF-IDF search engine — loads prebuilt index from gamescope.db.
 No indexing on startup. Run build_db.py once to generate the database.
 """
 
-import html
 import json
 import logging
 import math
 import os
 import pickle
-import re
 import sqlite3
 from collections import Counter, defaultdict
 from heapq import nlargest
 from typing import Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+from text_utils import clean_text, tokenize, bigrams
 
-TOKEN_RE = re.compile(r"[a-z0-9]+")
-HTML_TAG_RE = re.compile(r"<[^>]+>")
+logger = logging.getLogger(__name__)
 
 SOCIAL_BOOST_FACTOR = 0.15
 SNIPPETS_PER_GAME = 3
 SIMILAR_GAMES_COUNT = 3
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db", "gamescope.db")
-
-
-def _clean_text(value) -> str:
-    if not value:
-        return ""
-    text = html.unescape(str(value))
-    return HTML_TAG_RE.sub(" ", text)
-
-
-def _tokenize(text: str) -> List[str]:
-    return TOKEN_RE.findall(text.lower())
 
 
 def _safe_float(val):
@@ -111,11 +97,12 @@ class GameSearchEngine:
                 self.genre_index[genre.lower()].add(i)
 
     def search(self, query: str, limit: int = 60) -> dict:
-        tokens = _tokenize(_clean_text(query))
+        tokens = tokenize(clean_text(query))
         if not tokens:
             return {"results": [], "process": None}
 
-        query_counts = Counter(tokens)
+        query_bigrams = bigrams(tokens)
+        query_counts = Counter(tokens + query_bigrams)
         N = len(self.games)
 
         query_weights: Dict[str, float] = {}
@@ -179,7 +166,7 @@ class GameSearchEngine:
             results.append({
                 "id": game.get("id", ""),
                 "name": game.get("name", ""),
-                "description": _clean_text(game.get("description", "")),
+                "description": clean_text(game.get("description", "")),
                 "avg_rating": _safe_float(game.get("avg_rating")),
                 "image_url": _get_image_url(game),
                 "source": game.get("source", ""),
@@ -188,10 +175,10 @@ class GameSearchEngine:
                 "price_usd": _safe_float(game.get("price_usd")),
                 "release_date": game.get("release_date"),
                 "platform": game.get("platform") or [],
-                "sentiment": (
+                "sentiment": game.get("computed_sentiment", (
                     (game.get("positive") or 0)
                     / max(1, (game.get("positive") or 0) + (game.get("negative") or 0))
-                ),
+                )),
                 "top_tags": top_tags,
                 "similar_ids": [],
                 "score": round(boosted, 6),
@@ -228,7 +215,7 @@ class GameSearchEngine:
                 "reviewer": r.get("user", "Anonymous"),
                 "rating": None,
                 "summary": "",
-                "text": _clean_text(r.get("review", ""))[:300],
+                "text": clean_text(r.get("review", ""))[:300],
             })
         for r in sorted(
             game.get("amazon_reviews") or [],
@@ -239,7 +226,7 @@ class GameSearchEngine:
                 "reviewer": r.get("reviewer_name", "Anonymous"),
                 "rating": r.get("rating"),
                 "summary": r.get("summary", ""),
-                "text": _clean_text(r.get("review", ""))[:300],
+                "text": clean_text(r.get("review", ""))[:300],
             })
         return reviews
 
@@ -254,7 +241,7 @@ class GameSearchEngine:
         for review in reviews:
             if not review.strip():
                 continue
-            review_tokens = set(_tokenize(review))
+            review_tokens = set(tokenize(review))
             overlap = len(query_tokens & review_tokens)
             if overlap > 0:
                 score = overlap / (1 + math.log(1 + len(review_tokens)))

@@ -53,7 +53,7 @@ function App(): JSX.Element {
           <span className="brand-e2">e</span>
         </div>
         {!hasResults && (
-          <p className="tagline">Explore 32,000+ games in 3D space</p>
+          <p className="tagline">Explore 5000+ games in 3D space</p>
         )}
         <div className="search-wrap">
           <div className="search-box">

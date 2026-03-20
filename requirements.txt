@@ -8,4 +8,6 @@ python-dotenv
 numpy
 scipy
 anthropic
+nltk
+vaderSentiment
 git+https://github.com/MrPeterss/infosci-spark-client.git
