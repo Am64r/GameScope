@@ -1,17 +1,24 @@
-export interface GameResult {
-  app_id: string
-  name: string
-  short_description: string
-  genres: string[]
-  tags: string[]
-  price: number | null
-  positive: number | null
-  negative: number | null
-  review_snippets: string[]
-  score: number
+export interface Review {
+  reviewer: string;
+  rating: number | null;
+  summary: string;
+  text: string;
 }
 
-export interface SearchResponse {
-  results: GameResult[]
-  similar_games: GameResult[]
+export interface Game {
+  id: string;
+  name: string;
+  description: string;
+  avg_rating: number | null;
+  image_url: string;
+  source: 'amazon' | 'steam' | string;
+  genres: string[];
+  top_reviews: Review[];
+  price_usd: number | null;
+  release_date: string | null;
+  platform: string[];
+  sentiment: number | null;
+  top_tags: string[];
+  similar_ids: string[];
+  score?: number;
 }

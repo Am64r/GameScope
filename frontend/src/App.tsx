@@ -1,481 +1,155 @@
-import { FormEvent, useState, useCallback, useRef, useEffect, type JSX } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
-import { GameResult, SearchResponse } from './types'
-import ScoreMeter from './components/ScoreMeter'
-import EmptyState from './components/EmptyState'
-import LoadingState from './components/LoadingState'
-import ReviewCarousel from './components/ReviewCarousel'
-import MouseField from './components/MouseField'
-import SoundToggle from './components/SoundToggle'
-import { useIntersection } from './hooks/useIntersection'
-import { useSound } from './hooks/useSound'
-import { useKeyboardNav } from './hooks/useKeyboardNav'
-
-const STEAM_IMG = (appId: string) =>
-  `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/header.jpg`
-
-function SteamImage({
-  appId,
-  className,
-  fallbackClass,
-}: {
-  appId: string
-  className: string
-  fallbackClass: string
-}): JSX.Element {
-  const [failed, setFailed] = useState(false)
-
-  if (failed) {
-    return <div className={fallbackClass}>&#x1F3AE;</div>
-  }
-
-  return (
-    <div className={className}>
-      <img
-        src={STEAM_IMG(appId)}
-        alt=""
-        loading="lazy"
-        onError={() => setFailed(true)}
-      />
-    </div>
-  )
-}
-
-function AnimatedCard({
-  index,
-  children,
-  className,
-  onClick,
-  focused,
-}: {
-  index: number
-  children: React.ReactNode
-  className: string
-  onClick: () => void
-  focused: boolean
-}): JSX.Element {
-  const [intersectionRef, visible] = useIntersection(0.1)
-  const delay = Math.min(index * 60, 400)
-  const divRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (focused && divRef.current) {
-      divRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-    }
-  }, [focused])
-
-  const setRef = useCallback((el: HTMLDivElement | null) => {
-    divRef.current = el
-    ;(intersectionRef as React.MutableRefObject<HTMLDivElement | null>).current = el
-  }, [intersectionRef])
-
-  return (
-    <div
-      ref={setRef}
-      className={`card-enter${visible ? ' visible' : ''} ${className}${focused ? ' card-focused' : ''}`}
-      style={{ transitionDelay: `${delay}ms` }}
-      onClick={onClick}
-    >
-      {children}
-    </div>
-  )
-}
-
-function HeroCard({
-  game,
-  maxScore,
-  expanded,
-  onClick,
-  onTagClick,
-  focused,
-}: {
-  game: GameResult
-  maxScore: number
-  expanded: boolean
-  onClick: () => void
-  onTagClick: (tag: string) => void
-  focused: boolean
-}): JSX.Element {
-  const positive = game.positive ?? 0
-  const negative = game.negative ?? 0
-  const total = positive + negative
-  const sentiment = total > 0 ? Math.round((positive / total) * 100) : null
-
-  return (
-    <AnimatedCard index={0} className="hero-card" onClick={onClick} focused={focused}>
-      <SteamImage
-        appId={game.app_id}
-        className="hero-card-image-wrap"
-        fallbackClass="hero-card-image-fallback"
-      />
-      <div className="hero-card-image-wrap hero-scrim" style={{ position: 'absolute', top: 0 }} />
-
-      <div className="hero-card-body">
-        <div className="result-header">
-          <h2>{game.name}</h2>
-          {sentiment !== null && (
-            <span className={`sentiment ${sentiment >= 70 ? 'positive' : sentiment >= 40 ? 'mixed' : 'negative'}`}>
-              {sentiment}%
-            </span>
-          )}
-        </div>
-
-        <ScoreMeter score={game.score} maxScore={maxScore} />
-
-        <p className={`description${expanded ? '' : ' description-clamped'}`}>
-          {game.short_description || 'No description available.'}
-        </p>
-
-        {game.tags && game.tags.length > 0 && (
-          <div className="tags">
-            {game.tags.slice(0, expanded ? undefined : 4).map((tag) => (
-              <span
-                key={tag}
-                className="tag"
-                onClick={(e) => { e.stopPropagation(); onTagClick(tag) }}
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {game.review_snippets && game.review_snippets.length > 0 && !expanded && (
-          <p className="hero-snippet">"{game.review_snippets[0]}"</p>
-        )}
-
-        <div className={`card-expandable${expanded ? ' expanded' : ''}`}>
-          <div className="card-expandable-inner">
-            {game.review_snippets && game.review_snippets.length > 0 && (
-              <ReviewCarousel snippets={game.review_snippets} />
-            )}
-
-            <div className="result-meta">
-              <span>{game.genres.length > 0 ? game.genres.join(' / ') : 'N/A'}</span>
-              <span>{game.price != null && game.price > 0 ? `$${game.price.toFixed(2)}` : 'Free'}</span>
-              <span>{total.toLocaleString()} reviews</span>
-              <a
-                className="steam-link"
-                href={`https://store.steampowered.com/app/${game.app_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-              >
-                View on Steam &rarr;
-              </a>
-            </div>
-          </div>
-        </div>
-
-        <p className="card-expand-indicator">
-          {expanded ? '[ collapse ]' : '[ click to expand ]'}
-        </p>
-      </div>
-    </AnimatedCard>
-  )
-}
-
-function GameCard({
-  game,
-  index,
-  maxScore,
-  expanded,
-  onClick,
-  onTagClick,
-  focused,
-}: {
-  game: GameResult
-  index: number
-  maxScore: number
-  expanded: boolean
-  onClick: () => void
-  onTagClick: (tag: string) => void
-  focused: boolean
-}): JSX.Element {
-  const positive = game.positive ?? 0
-  const negative = game.negative ?? 0
-  const total = positive + negative
-  const sentiment = total > 0 ? Math.round((positive / total) * 100) : null
-
-  return (
-    <AnimatedCard index={index} className="game-card" onClick={onClick} focused={focused}>
-      <SteamImage
-        appId={game.app_id}
-        className="game-card-image-wrap"
-        fallbackClass="game-card-image-fallback"
-      />
-
-      <div className="game-card-body">
-        <div className="result-header">
-          <h2>{game.name}</h2>
-          {sentiment !== null && (
-            <span className={`sentiment ${sentiment >= 70 ? 'positive' : sentiment >= 40 ? 'mixed' : 'negative'}`}>
-              {sentiment}%
-            </span>
-          )}
-        </div>
-
-        <ScoreMeter score={game.score} maxScore={maxScore} />
-
-        <p className={`description${expanded ? '' : ' description-clamped'}`}>
-          {game.short_description || 'No description available.'}
-        </p>
-
-        {game.tags && game.tags.length > 0 && (
-          <div className="tags">
-            {game.tags.slice(0, expanded ? undefined : 4).map((tag) => (
-              <span
-                key={tag}
-                className="tag"
-                onClick={(e) => { e.stopPropagation(); onTagClick(tag) }}
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
-
-        <div className={`card-expandable${expanded ? ' expanded' : ''}`}>
-          <div className="card-expandable-inner">
-            {game.review_snippets && game.review_snippets.length > 0 && (
-              <ReviewCarousel snippets={game.review_snippets} />
-            )}
-
-            <div className="result-meta">
-              <span>{game.genres.length > 0 ? game.genres.join(' / ') : 'N/A'}</span>
-              <span>{game.price != null && game.price > 0 ? `$${game.price.toFixed(2)}` : 'Free'}</span>
-              <span>{total.toLocaleString()} reviews</span>
-              <a
-                className="steam-link"
-                href={`https://store.steampowered.com/app/${game.app_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-              >
-                View on Steam &rarr;
-              </a>
-            </div>
-          </div>
-        </div>
-
-        <p className="card-expand-indicator">
-          {expanded ? '[ collapse ]' : '[ click to expand ]'}
-        </p>
-      </div>
-    </AnimatedCard>
-  )
-}
-
-function SimilarRail({ games }: { games: GameResult[] }): JSX.Element {
-  const railRef = useRef<HTMLDivElement>(null)
-
-  const scroll = (dir: number) => {
-    if (railRef.current) {
-      railRef.current.scrollBy({ left: dir * 220, behavior: 'smooth' })
-    }
-  }
-
-  return (
-    <div className="similar-rail-wrap">
-      <button className="similar-rail-arrow left" onClick={() => scroll(-1)}>&lt;</button>
-      <div className="similar-rail" ref={railRef}>
-        {games.map((game) => (
-          <a
-            key={game.app_id}
-            className="similar-rail-card"
-            href={`https://store.steampowered.com/app/${game.app_id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ textDecoration: 'none', color: 'inherit' }}
-          >
-            <SteamImage
-              appId={game.app_id}
-              className="game-card-image-wrap"
-              fallbackClass="game-card-image-fallback"
-            />
-            <div className="similar-rail-card-body">
-              <h4>{game.name}</h4>
-              <div className="similar-rail-card-meta">
-                <span>{game.genres.length > 0 ? game.genres[0] : ''}</span>
-                <span>{game.price != null && game.price > 0 ? `$${game.price.toFixed(2)}` : 'Free'}</span>
-              </div>
-            </div>
-          </a>
-        ))}
-      </div>
-      <button className="similar-rail-arrow right" onClick={() => scroll(1)}>&gt;</button>
-    </div>
-  )
-}
+import { Game } from './types'
+import ArcadeWorld from './ArcadeWorld'
 
 function App(): JSX.Element {
-  const [query, setQuery] = useState<string>('')
-  const [results, setResults] = useState<GameResult[]>([])
-  const [similarGames, setSimilarGames] = useState<GameResult[]>([])
-  const [loading, setLoading] = useState<boolean>(false)
-  const [error, setError] = useState<string>('')
-  const [searched, setSearched] = useState<boolean>(false)
-  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set())
-  const [focusedIndex, setFocusedIndex] = useState(-1)
+  const [useLlm, setUseLlm] = useState<boolean | null>(null)
+  const [searchTerm, setSearchTerm] = useState<string>('')
+  const [games, setGames] = useState<Game[]>([])
+  const [arcadeOpen, setArcadeOpen] = useState<boolean>(false)
+  const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const sound = useSound()
 
-  const maxScore = results.length > 0 ? results[0].score : 1
-
-  const doSearch = useCallback(async (text: string) => {
-    if (!text.trim()) return
-
-    setLoading(true)
-    setError('')
-    setSearched(true)
-    setExpandedCards(new Set())
-    setFocusedIndex(-1)
-    sound.playSearch()
-
-    try {
-      const response = await fetch(`/api/search?title=${encodeURIComponent(text.trim())}&limit=20`)
-      if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`)
-      }
-      const data: SearchResponse = await response.json()
-      setResults(data.results)
-      setSimilarGames(data.similar_games)
-      if (data.results.length > 0) sound.playResult()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Search failed'
-      setError(message)
-      setResults([])
-      setSimilarGames([])
-    } finally {
-      setLoading(false)
-    }
-  }, [sound])
-
-  const handleSearch = async (event: FormEvent) => {
-    event.preventDefault()
-    doSearch(query)
-  }
-
-  const handleQueryClick = useCallback((q: string) => {
-    setQuery(q)
-    doSearch(q)
-  }, [doSearch])
-
-  const toggleCard = useCallback((appId: string) => {
-    sound.playExpand()
-    setExpandedCards((prev) => {
-      const next = new Set(prev)
-      if (next.has(appId)) {
-        next.delete(appId)
-      } else {
-        next.add(appId)
-      }
-      return next
-    })
-  }, [sound])
-
-  const handleTagClick = useCallback((tag: string) => {
-    sound.playTag()
-    const newQuery = `${query} ${tag}`.trim()
-    setQuery(newQuery)
-    doSearch(newQuery)
-  }, [query, doSearch, sound])
-
-  const handleExpand = useCallback((i: number) => {
-    const game = results[i]
-    if (game) toggleCard(game.app_id)
-  }, [results, toggleCard])
-
-  const handleClearFocus = useCallback(() => {
-    setFocusedIndex(-1)
-    inputRef.current?.focus()
+  useEffect(() => {
+    fetch('/api/config').then(r => r.json()).then(data => setUseLlm(data.use_llm))
   }, [])
 
-  useKeyboardNav(results.length, focusedIndex, setFocusedIndex, handleExpand, handleClearFocus)
+  const doSearch = async (value: string): Promise<void> => {
+    setArcadeOpen(false)
+    if (value.trim() === '') { setGames([]); return }
+    setLoading(true)
+    const response = await fetch(`/api/games?q=${encodeURIComponent(value)}`)
+    const data: Game[] = await response.json()
+    setGames(data)
+    setLoading(false)
+  }
+
+  const handleSubmit = () => { doSearch(searchTerm) }
+
+  const handlePill = (q: string) => { setSearchTerm(q); doSearch(q) }
+
+  if (useLlm === null) return <></>
+
+  if (arcadeOpen && games.length > 0) {
+    return <ArcadeWorld games={games} query={searchTerm} onSearch={(q) => { setSearchTerm(q); doSearch(q) }} onExit={() => setArcadeOpen(false)} />
+  }
+
+  const hasResults = games.length > 0
 
   return (
-    <>
-      <MouseField />
-      <div className="crt-overlay" />
-
-      <main className="app">
-        <header className="header">
-          <h1>
-            <span className="invader-icon">{'\u{1F47E}'}</span>
-            GameScope
-          </h1>
-          <p className="subtitle">Describe the experience. Find the game.</p>
-        </header>
-
-        <form onSubmit={handleSearch}>
-          <div className="search-row">
+    <div className="landing">
+      {/* Hero */}
+      <div className={`hero ${hasResults ? 'hero--compact' : ''}`}>
+        <div className="brand" onClick={() => inputRef.current?.focus()}>
+          <span className="brand-g">G</span>
+          <span className="brand-a">a</span>
+          <span className="brand-m">m</span>
+          <span className="brand-e">e</span>
+          <span className="brand-s">S</span>
+          <span className="brand-c">c</span>
+          <span className="brand-o">o</span>
+          <span className="brand-p">p</span>
+          <span className="brand-e2">e</span>
+        </div>
+        {!hasResults && (
+          <p className="tagline">Explore 32,000+ games in 3D space</p>
+        )}
+        <div className="search-wrap">
+          <div className="search-box">
+            <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
             <input
               ref={inputRef}
-              type="text"
-              placeholder='a cozy game with no combat...'
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              autoComplete="off"
+              placeholder="Search games, genres, vibes…"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
+              autoFocus
             />
-            <button type="submit" disabled={loading}>
-              SEARCH
+            <button className="search-btn" onClick={handleSubmit} disabled={loading}>
+              {loading ? <div className="spinner" /> : 'Search'}
             </button>
           </div>
-        </form>
+        </div>
 
-        {loading && <LoadingState />}
-        {!loading && error && <p className="status error">{error}</p>}
-        {!loading && searched && !error && results.length === 0 && (
-          <p className="status">No matches. Try different keywords.</p>
+        {!hasResults && (
+          <div className="pill-row">
+            {['open world RPG', 'cozy puzzle', 'multiplayer shooter', 'indie platformer', 'horror survival'].map(q => (
+              <button key={q} className="pill" onClick={() => handlePill(q)}>{q}</button>
+            ))}
+          </div>
         )}
+      </div>
 
-        {!loading && !searched && <EmptyState onQueryClick={handleQueryClick} />}
+      {/* Results */}
+      {hasResults && (
+        <div className="results">
+          <div className="results-header">
+            <span className="results-count">{games.length} results for <em>"{searchTerm}"</em></span>
+            <button className="arcade-btn" onClick={() => setArcadeOpen(true)}>
+              🕹 Explore in 3D
+            </button>
+          </div>
 
-        {results.length > 0 && (
-          <section className="results">
-            <h3 className="section-title">TOP MATCHES</h3>
+          <div className="cards">
+            {games.map((game, i) => {
+              const zone = game.genres[0] ?? 'Other'
+              const zoneColors: Record<string, string> = {
+                Action: '#ef4444', RPG: '#8b5cf6', Simulation: '#22c55e',
+                Puzzle: '#14b8a6', Strategy: '#3b82f6', Adventure: '#f97316',
+                Sports: '#eab308', Racing: '#ec4899',
+              }
+              const accent = zoneColors[zone] ?? '#9ca3af'
+              const price = game.price_usd == null ? null : game.price_usd === 0 ? 'Free' : `$${game.price_usd.toFixed(2)}`
+              const year = game.release_date?.match(/\b(19|20)\d{2}\b/)?.[0]
+              return (
+                <div key={i} className="card" style={{ '--accent': accent } as React.CSSProperties}>
+                  <div className="card-thumb">
+                    {game.image_url
+                      ? <img src={game.image_url} alt={game.name} />
+                      : <div className="card-thumb-empty" style={{ background: accent + '22' }}><span style={{ color: accent, fontSize: 28 }}>🎮</span></div>
+                    }
+                    <div className="card-score">{game.score != null ? `${Math.round(game.score * 100)}%` : ''}</div>
+                  </div>
 
-            {/* Hero card for #1 result */}
-            <HeroCard
-              game={results[0]}
-              maxScore={maxScore}
-              expanded={expandedCards.has(results[0].app_id)}
-              onClick={() => toggleCard(results[0].app_id)}
-              onTagClick={handleTagClick}
-              focused={focusedIndex === 0}
-            />
-
-            {/* Two-column grid for remaining results */}
-            {results.length > 1 && (
-              <div className="results-grid">
-                {results.slice(1).map((game, i) => (
-                  <GameCard
-                    key={game.app_id}
-                    game={game}
-                    index={i + 1}
-                    maxScore={maxScore}
-                    expanded={expandedCards.has(game.app_id)}
-                    onClick={() => toggleCard(game.app_id)}
-                    onTagClick={handleTagClick}
-                    focused={focusedIndex === i + 1}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
-        {similarGames.length > 0 && (
-          <section className="results similar-section">
-            <h3 className="section-title">YOU MIGHT ALSO LIKE</h3>
-            <p className="section-subtitle">Similar games based on shared genres and tags</p>
-            <SimilarRail games={similarGames} />
-          </section>
-        )}
-      </main>
-
-      <SoundToggle enabled={sound.enabled} onToggle={sound.toggle} />
-    </>
+                  <div className="card-body">
+                    <div className="card-top">
+                      <span className="card-zone" style={{ color: accent }}>{zone}</span>
+                      <span className={`card-source source-${game.source}`}>{game.source}</span>
+                    </div>
+                    <h3 className="card-name">{game.name}</h3>
+                    <div className="card-meta">
+                      {game.avg_rating != null && <span className="card-rating">★ {game.avg_rating.toFixed(1)}</span>}
+                      {price && <span className="card-price">{price}</span>}
+                      {year && <span className="card-year">{year}</span>}
+                      {game.sentiment != null && (
+                        <span className="card-sentiment">
+                          <span className="sentiment-bar" style={{ width: `${Math.round(game.sentiment * 100)}%` }} />
+                          {Math.round(game.sentiment * 100)}% pos
+                        </span>
+                      )}
+                    </div>
+                    <p className="card-desc">{game.description}</p>
+                    {(game.top_tags ?? []).length > 0 && (
+                      <div className="card-tags">
+                        {(game.top_tags ?? []).slice(0, 4).map(t => <span key={t} className="tag">{t}</span>)}
+                      </div>
+                    )}
+                    {game.top_reviews.length > 0 && (
+                      <p className="card-review">
+                        "{game.top_reviews[0].summary || game.top_reviews[0].text.slice(0, 100)}"
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
