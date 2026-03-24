@@ -572,7 +572,7 @@ function DetailPanel({ game, query, gameMap, onClose, onNavigate }: {
           ) : verdict ? (
             <p style={{ margin: 0, fontSize: 14, color: '#e0d0ff', lineHeight: 1.7 }}>{verdict}</p>
           ) : (
-            <p style={{ margin: 0, fontSize: 13, color: '#5a4080', fontStyle: 'italic' }}>Set ANTHROPIC_API_KEY to enable AI verdicts.</p>
+            <p style={{ margin: 0, fontSize: 13, color: '#5a4080', fontStyle: 'italic' }}>AI verdicts unavailable.</p>
           )}
         </div>
 
