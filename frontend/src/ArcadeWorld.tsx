@@ -565,7 +565,7 @@ function DetailPanel({ game, query, gameMap, onClose, onNavigate }: {
           padding: '14px 18px', marginBottom: 20, minHeight: 60,
         }}>
           <p style={{ margin: '0 0 6px', fontSize: 10, fontWeight: 700, letterSpacing: 3, color: '#00ffff', textTransform: 'uppercase', fontFamily: "'Press Start 2P', monospace" }}>
-            Claude's Take
+            
           </p>
           {loading ? (
             <p style={{ margin: 0, fontSize: 13, color: '#aa88cc', fontStyle: 'italic' }}>Reading reviews...</p>
