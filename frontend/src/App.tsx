@@ -10,6 +10,7 @@ function App(): JSX.Element {
   const [games, setGames] = useState<Game[]>([])
   const [processMeta, setProcessMeta] = useState<SearchProcessMeta | null>(null)
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
+  const [filterNsfw, setFilterNsfw] = useState<boolean>(true)
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -20,15 +21,16 @@ function App(): JSX.Element {
     })
   }, [])
 
-  const doSearch = async (value: string): Promise<void> => {
+  const doSearch = async (value: string, nsfw?: boolean): Promise<void> => {
     setSelectedGame(null)
     if (value.trim() === '') {
       setGames([])
       setProcessMeta(null)
       return
     }
+    const nsfwFlag = nsfw ?? filterNsfw
     setLoading(true)
-    const response = await fetch(`/api/games?q=${encodeURIComponent(value)}&include_process=${includeProcessMeta ? '1' : '0'}`)
+    const response = await fetch(`/api/games?q=${encodeURIComponent(value)}&include_process=${includeProcessMeta ? '1' : '0'}&nsfw=${nsfwFlag ? '0' : '1'}`)
     const data = await response.json()
     if (Array.isArray(data)) {
       setGames(data as Game[])
@@ -44,6 +46,11 @@ function App(): JSX.Element {
   const handleSubmit = () => { doSearch(searchTerm) }
 
   const handlePill = (q: string) => { setSearchTerm(q); doSearch(q) }
+
+  const handleNsfwToggle = (checked: boolean) => {
+    setFilterNsfw(checked)
+    if (searchTerm.trim()) doSearch(searchTerm, checked)
+  }
 
   if (useLlm === null) return <></>
 
@@ -85,6 +92,10 @@ function App(): JSX.Element {
             </button>
           </div>
         </div>
+        <label className="nsfw-toggle">
+          <input type="checkbox" checked={filterNsfw} onChange={e => handleNsfwToggle(e.target.checked)} />
+          <span>Hide NSFW</span>
+        </label>
 
         {!hasResults && (
           <div className="pill-row">

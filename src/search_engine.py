@@ -34,10 +34,11 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db", "gamesc
 SVD_ALPHA = float(os.environ.get("SVD_ALPHA", "0.7"))
 ENABLE_SVD_SEARCH = os.environ.get("ENABLE_SVD_SEARCH", "1").lower() not in {"0", "false", "no"}
 ENABLE_SVD_EXPLAINABILITY = os.environ.get("ENABLE_SVD_EXPLAINABILITY", "1").lower() not in {"0", "false", "no"}
-ENABLE_NEGATION_QUERY = os.environ.get("ENABLE_NEGATION_QUERY", "0").lower() in {"1", "true", "yes"}
+ENABLE_NEGATION_QUERY = os.environ.get("ENABLE_NEGATION_QUERY", "1").lower() in {"1", "true", "yes"}
 NEGATION_MODE = os.environ.get("NEGATION_MODE", "soft").lower()
 NEGATION_PATTERN = re.compile(r"\b(?:no|not|without)\s+([a-z0-9]+(?:\s+[a-z0-9]+)?)")
 AUTO_BUILD_DB = os.environ.get("AUTO_BUILD_DB", "1").lower() not in {"0", "false", "no"}
+NSFW_TAGS = {"sexual content", "nudity"}
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(MODULE_DIR)
 BUILD_SCRIPT_CANDIDATES = [
@@ -97,6 +98,7 @@ class GameSearchEngine:
         self.svd_meta: Dict = {}
         self.component_top_terms: Dict[int, List[str]] = {}
         self.svd_enabled = False
+        self.nsfw_docs: set = set()
 
         self._load_db()
 
@@ -219,9 +221,13 @@ class GameSearchEngine:
 
     def _build_tag_genre_indices(self):
         self.doc_token_sets = []
+        self.nsfw_docs = set()
         for i, game in enumerate(self.games):
             for tag in (game.get("tags") or {}):
-                self.tag_index[tag.lower()].add(i)
+                tag_lower = tag.lower()
+                self.tag_index[tag_lower].add(i)
+                if tag_lower in NSFW_TAGS:
+                    self.nsfw_docs.add(i)
             for genre in game.get("genres") or []:
                 self.genre_index[genre.lower()].add(i)
             token_set = set(tokenize(clean_text(game.get("name", ""))))
@@ -271,15 +277,111 @@ class GameSearchEngine:
             return None
         return query_latent
 
-    def search(self, query: str, limit: int = 60) -> dict:
+    def search(self, query: str, limit: int = 60, filter_nsfw: bool = True) -> dict:
         tokens = tokenize(clean_text(query))
         negated_terms = self._extract_negated_terms(query) if ENABLE_NEGATION_QUERY else set()
         if not tokens:
             return {"results": [], "process": None}
 
+        if negated_terms:
+            tokens = [t for t in tokens if t not in negated_terms]
         query_bigrams = bigrams(tokens)
+        if negated_terms:
+            query_bigrams = [b for b in query_bigrams if b not in negated_terms]
         query_counts = Counter(tokens + query_bigrams)
         N = len(self.games)
+
+        # Pure negation query (e.g. "no combat") — use inverted SVD to find
+        # games semantically opposite to the negated concept
+        if not query_counts and negated_terms:
+            neg_counts = Counter(negated_terms)
+            neg_svd = self._compute_svd_query_vector(neg_counts)
+
+            scored_docs: List[Tuple[float, int]] = []
+            for doc_idx in range(N):
+                if filter_nsfw and doc_idx in self.nsfw_docs:
+                    continue
+                neg_hits = self._doc_negation_hits(doc_idx, negated_terms)
+                if neg_hits:
+                    continue
+                svd_score = 0.0
+                if (
+                    np is not None
+                    and neg_svd is not None
+                    and self.svd_doc_vecs is not None
+                    and self.svd_doc_norms is not None
+                ):
+                    neg_svd_norm = float(np.linalg.norm(neg_svd))
+                    doc_norm = float(self.svd_doc_norms[doc_idx])
+                    if neg_svd_norm > 0 and doc_norm > 0:
+                        # Negate: lower cosine with the negated term = higher score
+                        cosine = float(np.dot(neg_svd, self.svd_doc_vecs[doc_idx])) / (
+                            neg_svd_norm * doc_norm
+                        )
+                        svd_score = -cosine
+                boost = self.social_boost[doc_idx] if doc_idx < len(self.social_boost) else 1.0
+                final = ((svd_score + 1.0) / 2.0) * boost  # normalize to 0-1 range
+                scored_docs.append((final, doc_idx))
+
+            top_docs = nlargest(limit, scored_docs, key=lambda x: x[0])
+
+            results = []
+            for final, doc_idx in top_docs:
+                game = self.games[doc_idx]
+                top_reviews = self._get_top_reviews(game)
+                tags = game.get("tags") or {}
+                top_tags = sorted(tags.keys(), key=lambda t: tags[t], reverse=True)[:5]
+                results.append({
+                    "id": game.get("id", ""),
+                    "name": game.get("name", ""),
+                    "description": clean_text(game.get("description", "")),
+                    "avg_rating": _safe_float(game.get("avg_rating")),
+                    "image_url": _get_image_url(game),
+                    "source": game.get("source", ""),
+                    "genres": game.get("genres") or [],
+                    "top_reviews": top_reviews,
+                    "price_usd": _safe_float(game.get("price_usd")),
+                    "release_date": game.get("release_date"),
+                    "platform": game.get("platform") or [],
+                    "sentiment": game.get("computed_sentiment", (
+                        (game.get("positive") or 0)
+                        / max(1, (game.get("positive") or 0) + (game.get("negative") or 0))
+                    )),
+                    "top_tags": top_tags,
+                    "similar_ids": [],
+                    "steam_app_id": game.get("steam_app_id"),
+                    "steam_url": (
+                        f"https://store.steampowered.com/app/{game.get('steam_app_id')}/"
+                        if game.get("steam_app_id")
+                        else None
+                    ),
+                    "score": round(final, 6),
+                    "review_snippets": [],
+                    "explain": {
+                        "tfidf_score": 0.0,
+                        "svd_score": round(final, 6),
+                        "hybrid_score": round(final, 6),
+                        "negation_hits": [],
+                    },
+                })
+
+            return {
+                "results": results,
+                "process": {
+                    "tokens": [{"token": t, "idf": 0.0, "df": 0, "in_vocab": False} for t in negated_terms],
+                    "total_docs": N,
+                    "docs_matched": len(scored_docs),
+                    "docs_scored": len(results),
+                    "top_genres": [],
+                    "top_tags": [],
+                    "svd": None,
+                    "negation": {
+                        "enabled": True,
+                        "mode": NEGATION_MODE,
+                        "terms": sorted(list(negated_terms)),
+                    },
+                },
+            }
 
         query_weights: Dict[str, float] = {}
         token_info = []
@@ -310,6 +412,8 @@ class GameSearchEngine:
         touched = []
         for term, qw in query_weights.items():
             for doc_idx, doc_weight in self.postings.get(term, []):
+                if filter_nsfw and doc_idx in self.nsfw_docs:
+                    continue
                 if scores[doc_idx] == 0.0:
                     touched.append(doc_idx)
                 scores[doc_idx] += qw * doc_weight

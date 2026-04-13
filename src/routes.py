@@ -40,7 +40,8 @@ def register_routes(app):
             limit = 60
 
         limit = max(1, min(limit, 100))
-        search_data = SEARCH_ENGINE.search(query, limit=limit)
+        filter_nsfw = request.args.get("nsfw", "0").lower() not in {"1", "true", "yes"}
+        search_data = SEARCH_ENGINE.search(query, limit=limit, filter_nsfw=filter_nsfw)
         include_process_raw = request.args.get("include_process")
         include_process = INCLUDE_PROCESS_META
         if include_process_raw is not None:
