@@ -38,9 +38,25 @@ ENABLE_NEGATION_QUERY = os.environ.get("ENABLE_NEGATION_QUERY", "0").lower() in 
 NEGATION_MODE = os.environ.get("NEGATION_MODE", "soft").lower()
 NEGATION_PATTERN = re.compile(r"\b(?:no|not|without)\s+([a-z0-9]+(?:\s+[a-z0-9]+)?)")
 AUTO_BUILD_DB = os.environ.get("AUTO_BUILD_DB", "1").lower() not in {"0", "false", "no"}
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BUILD_SCRIPT_PATH = os.path.join(PROJECT_ROOT, "scripts", "build_db.py")
+MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(MODULE_DIR)
+BUILD_SCRIPT_CANDIDATES = [
+    os.path.join(PROJECT_ROOT, "scripts", "build_db.py"),
+    os.path.join(MODULE_DIR, "scripts", "build_db.py"),
+    os.path.join(os.getcwd(), "scripts", "build_db.py"),
+]
+BUILD_SCRIPT_PATH = next((p for p in BUILD_SCRIPT_CANDIDATES if os.path.exists(p)), BUILD_SCRIPT_CANDIDATES[0])
+BUILD_SCRIPT_CWD = os.path.dirname(os.path.dirname(BUILD_SCRIPT_PATH))
 REQUIRED_INDEX_KEYS = ["idf", "postings", "doc_norms", "social_boost", "review_texts"]
+REQUIRED_SVD_KEYS = [
+    "svd_doc_vecs_v1",
+    "svd_term_components_v1",
+    "svd_singular_values_v1",
+    "svd_vocab_v1",
+    "svd_doc_norms_v1",
+    "svd_meta_v1",
+]
+DEFAULT_SVD_K = int(os.environ.get("AUTO_BUILD_SVD_K", "96"))
 
 
 def _safe_float(val):
@@ -108,6 +124,16 @@ class GameSearchEngine:
         if missing_keys:
             conn.close()
             raise RuntimeError(f"Missing required search index keys after build: {', '.join(missing_keys)}")
+        needs_svd = ENABLE_SVD_SEARCH or ENABLE_SVD_EXPLAINABILITY
+        if needs_svd:
+            missing_svd_keys = self._missing_keys(conn, REQUIRED_SVD_KEYS)
+            if missing_svd_keys:
+                conn.close()
+                self._maybe_build_db(
+                    f"missing SVD keys: {', '.join(missing_svd_keys)}",
+                    svd_k=DEFAULT_SVD_K,
+                )
+                conn = sqlite3.connect(DB_PATH)
 
         # Load games
         rows = conn.execute("SELECT idx, data FROM games ORDER BY idx").fetchall()
@@ -163,26 +189,29 @@ class GameSearchEngine:
         return bool(count_row and count_row[0] > 0)
 
     def _missing_required_index_keys(self, conn: sqlite3.Connection) -> List[str]:
+        return self._missing_keys(conn, REQUIRED_INDEX_KEYS)
+
+    def _missing_keys(self, conn: sqlite3.Connection, required_keys: List[str]) -> List[str]:
         row = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='search_index'"
         ).fetchone()
         if row is None:
-            return REQUIRED_INDEX_KEYS[:]
+            return required_keys[:]
         rows = conn.execute("SELECT key FROM search_index").fetchall()
         present = {r[0] for r in rows}
-        return [k for k in REQUIRED_INDEX_KEYS if k not in present]
+        return [k for k in required_keys if k not in present]
 
-    def _maybe_build_db(self, reason: str) -> None:
+    def _maybe_build_db(self, reason: str, svd_k: int = DEFAULT_SVD_K) -> None:
         if not AUTO_BUILD_DB:
             return
         if not os.path.exists(BUILD_SCRIPT_PATH):
             logger.warning("Auto-build skipped; build script missing: %s", BUILD_SCRIPT_PATH)
             return
-        logger.info("Auto-building search index (%s)", reason)
+        logger.info("Auto-building search index (%s) with svd_k=%d", reason, svd_k)
         try:
             subprocess.run(
-                [sys.executable, BUILD_SCRIPT_PATH, "--db", DB_PATH],
-                cwd=PROJECT_ROOT,
+                [sys.executable, BUILD_SCRIPT_PATH, "--db", DB_PATH, "--svd-k", str(svd_k)],
+                cwd=BUILD_SCRIPT_CWD,
                 check=True,
             )
         except Exception as exc:
