@@ -24,6 +24,7 @@ RUN python -c "import nltk; nltk.download('stopwords', download_dir='/usr/local/
 FROM python:3.10-slim
 
 ENV CONTAINER_HOME=/var/www
+ENV NLTK_DATA=/usr/local/nltk_data
 
 WORKDIR $CONTAINER_HOME
 
@@ -33,4 +34,6 @@ COPY src/ $CONTAINER_HOME/src/
 COPY scripts/ $CONTAINER_HOME/scripts/
 COPY --from=frontend-build /app/frontend/dist $CONTAINER_HOME/frontend/dist
 
-CMD ["python", "-m", "gunicorn", "--chdir", "src", "app:app", "--bind", "0.0.0.0:5000", "--log-level", "debug"]
+RUN python /var/www/scripts/build_db.py --db /var/www/src/db/gamescope.db --svd-k 96
+
+CMD ["python", "-m", "gunicorn", "--chdir", "src", "app:app", "--bind", "0.0.0.0:5000", "--log-level", "debug", "--timeout", "120"]
