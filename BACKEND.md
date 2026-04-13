@@ -1,12 +1,12 @@
 # GameScope Backend
 
-Flask (Python 3.10) app serving a precomputed TF-IDF search engine over ~5000 games from Steam and Amazon. The entire index is built offline and loaded into memory at startup — no indexing at runtime.
+Flask (Python 3.10) app serving a precomputed TF-IDF + hybrid SVD search engine over ~5000 games from Steam and Amazon. The entire index is built offline and loaded into memory at startup.
 
 ## Architecture Overview
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                       build_db.py (offline)                  │
+│                    scripts/build_db.py (offline)             │
 │                                                              │
 │  final_dataset_1.json ──► sample 5000 games ──► tokenize     │
 │  (raw ~5000+ games)       by quality/genre      & stem       │
@@ -14,8 +14,8 @@ Flask (Python 3.10) app serving a precomputed TF-IDF search engine over ~5000 ga
 │                           compute sentiment ◄────┘           │
 │                           (VADER + Steam votes)              │
 │                                    │                         │
-│                           build TF-IDF index                 │
-│                           (idf, postings, norms, boosts)     │
+│                     build TF-IDF + SVD artifacts             │
+│               (idf, postings, norms, boosts, svd_*)          │
 │                                    │                         │
 │                                    ▼                         │
 │                             gamescope.db                     │
@@ -57,7 +57,7 @@ Example:
 
 ## Index Building (`build_db.py`)
 
-Run once offline: `python data/build_db.py`
+Run once offline: `python scripts/build_db.py`
 
 ### Step 1 — Sample Games
 
@@ -128,7 +128,22 @@ Everything is stored in `src/db/gamescope.db`:
 | Table | Contents |
 |-------|----------|
 | `games` | `idx` (int PK), `id` (text, indexed), `data` (JSON blob per game) |
-| `search_index` | `key` (text PK), `value` (pickled blob) — stores `idf`, `postings`, `doc_norms`, `social_boost`, `review_texts` |
+| `search_index` | `key` (text PK), `value` (pickled blob) — stores `idf`, `postings`, `doc_norms`, `social_boost`, `review_texts`, and `svd_*` blobs |
+
+### Step 5 — Build SVD Artifacts
+
+`scripts/build_db.py` also computes truncated SVD over the TF-IDF matrix to support hybrid semantic ranking and explainability.
+
+Stored keys:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `svd_doc_vecs_v1` | `np.ndarray` | Document latent vectors (`N x k`) |
+| `svd_term_components_v1` | `np.ndarray` | Term loading matrix (`V x k`) |
+| `svd_singular_values_v1` | `np.ndarray` | Singular values |
+| `svd_vocab_v1` | `list[str]` | Vocabulary aligned with SVD columns |
+| `svd_doc_norms_v1` | `np.ndarray` | Precomputed norms for latent cosine |
+| `svd_meta_v1` | `dict` | Build metadata and weights |
 
 ---
 
@@ -137,7 +152,7 @@ Everything is stored in `src/db/gamescope.db`:
 ### Startup
 
 1. Load all 5000 game JSON objects into `self.games` list
-2. Unpickle all index structures (`idf`, `postings`, `doc_norms`, `social_boost`, `review_texts`)
+2. Unpickle all index structures (`idf`, `postings`, `doc_norms`, `social_boost`, `review_texts`) and optional `svd_*` artifacts
 3. Build in-memory tag and genre inverted indices (maps lowercase tag/genre → set of doc indices)
 
 ### Query Processing
@@ -171,10 +186,13 @@ Final ranking:
 
 ```
 cosine_similarity = dot_product / (query_norm × doc_norm)
-final_score = cosine_similarity × social_boost[doc_idx]
+hybrid_score = alpha × tfidf_cosine + (1 - alpha) × svd_cosine
+final_score = hybrid_score × social_boost[doc_idx]
 ```
 
 Top-K results selected via `heapq.nlargest`.
+
+If SVD artifacts are missing or disabled, ranking falls back to TF-IDF-only behavior.
 
 ### Snippet Extraction
 
@@ -220,6 +238,12 @@ CREATE TABLE search_index (
 | `doc_norms` | `list[float]` | L2 norm per document |
 | `social_boost` | `list[float]` | Boost multiplier per document |
 | `review_texts` | `list[list[str]]` | Raw review texts per document (for snippet extraction) |
+| `svd_doc_vecs_v1` | `np.ndarray` | Doc latent vectors |
+| `svd_term_components_v1` | `np.ndarray` | Term-to-component loadings |
+| `svd_singular_values_v1` | `np.ndarray` | Singular values |
+| `svd_vocab_v1` | `list[str]` | SVD vocabulary mapping |
+| `svd_doc_norms_v1` | `np.ndarray` | Doc latent norms |
+| `svd_meta_v1` | `dict` | SVD metadata |
 
 ---
 

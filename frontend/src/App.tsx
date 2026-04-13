@@ -1,27 +1,43 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
-import { Game } from './types'
-import ArcadeWorld from './ArcadeWorld'
+import { Game, SearchProcessMeta, SearchResponse } from './types'
+import GameDetailModal from './components/GameDetailModal'
 
 function App(): JSX.Element {
   const [useLlm, setUseLlm] = useState<boolean | null>(null)
+  const [includeProcessMeta, setIncludeProcessMeta] = useState<boolean>(true)
   const [searchTerm, setSearchTerm] = useState<string>('')
   const [games, setGames] = useState<Game[]>([])
-  const [arcadeOpen, setArcadeOpen] = useState<boolean>(false)
+  const [processMeta, setProcessMeta] = useState<SearchProcessMeta | null>(null)
+  const [selectedGame, setSelectedGame] = useState<Game | null>(null)
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    fetch('/api/config').then(r => r.json()).then(data => setUseLlm(data.use_llm))
+    fetch('/api/config').then(r => r.json()).then(data => {
+      setUseLlm(data.use_llm)
+      setIncludeProcessMeta(data.include_process_meta ?? true)
+    })
   }, [])
 
   const doSearch = async (value: string): Promise<void> => {
-    setArcadeOpen(false)
-    if (value.trim() === '') { setGames([]); return }
+    setSelectedGame(null)
+    if (value.trim() === '') {
+      setGames([])
+      setProcessMeta(null)
+      return
+    }
     setLoading(true)
-    const response = await fetch(`/api/games?q=${encodeURIComponent(value)}`)
-    const data: Game[] = await response.json()
-    setGames(data)
+    const response = await fetch(`/api/games?q=${encodeURIComponent(value)}&include_process=${includeProcessMeta ? '1' : '0'}`)
+    const data = await response.json()
+    if (Array.isArray(data)) {
+      setGames(data as Game[])
+      setProcessMeta(null)
+    } else {
+      const payload = data as SearchResponse
+      setGames(payload.results ?? [])
+      setProcessMeta(payload.process ?? null)
+    }
     setLoading(false)
   }
 
@@ -30,10 +46,6 @@ function App(): JSX.Element {
   const handlePill = (q: string) => { setSearchTerm(q); doSearch(q) }
 
   if (useLlm === null) return <></>
-
-  if (arcadeOpen && games.length > 0) {
-    return <ArcadeWorld games={games} query={searchTerm} onSearch={(q) => { setSearchTerm(q); doSearch(q) }} onExit={() => setArcadeOpen(false)} />
-  }
 
   const hasResults = games.length > 0
 
@@ -88,9 +100,6 @@ function App(): JSX.Element {
         <div className="results">
           <div className="results-header">
             <span className="results-count">{games.length} results for <em>"{searchTerm}"</em></span>
-            <button className="arcade-btn" onClick={() => setArcadeOpen(true)}>
-              🕹 Explore in 3D
-            </button>
           </div>
 
           <div className="cards">
@@ -105,7 +114,7 @@ function App(): JSX.Element {
               const price = game.price_usd == null ? null : game.price_usd === 0 ? 'Free' : `$${game.price_usd.toFixed(2)}`
               const year = game.release_date?.match(/\b(19|20)\d{2}\b/)?.[0]
               return (
-                <div key={i} className="card" style={{ '--accent': accent } as React.CSSProperties}>
+                <div key={game.id || `${game.name}-${i}`} className="card" style={{ '--accent': accent } as React.CSSProperties} onClick={() => setSelectedGame(game)} onKeyDown={(e) => { if (e.key === 'Enter') setSelectedGame(game) }} role="button" tabIndex={0}>
                   <div className="card-thumb">
                     {game.image_url
                       ? <img src={game.image_url} alt={game.name} />
@@ -142,12 +151,21 @@ function App(): JSX.Element {
                         "{game.top_reviews[0].summary || game.top_reviews[0].text.slice(0, 100)}"
                       </p>
                     )}
+                    <p className="card-more">Click for details</p>
                   </div>
                 </div>
               )
             })}
           </div>
         </div>
+      )}
+      {selectedGame && (
+        <GameDetailModal
+          game={selectedGame}
+          query={searchTerm}
+          onClose={() => setSelectedGame(null)}
+          processMeta={processMeta}
+        />
       )}
     </div>
   )

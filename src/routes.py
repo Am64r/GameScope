@@ -15,6 +15,7 @@ from flask import jsonify, request, send_from_directory
 from search_engine import GameSearchEngine
 
 USE_LLM = os.environ.get("ANTHROPIC_API_KEY") is not None
+INCLUDE_PROCESS_META = os.environ.get("INCLUDE_PROCESS_META", "1").lower() not in {"0", "false", "no"}
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def register_routes(app):
 
     @app.route("/api/config")
     def config():
-        return jsonify({"use_llm": USE_LLM})
+        return jsonify({"use_llm": USE_LLM, "include_process_meta": INCLUDE_PROCESS_META})
 
     @app.route("/api/games")
     def games_search():
@@ -40,6 +41,12 @@ def register_routes(app):
 
         limit = max(1, min(limit, 100))
         search_data = SEARCH_ENGINE.search(query, limit=limit)
+        include_process_raw = request.args.get("include_process")
+        include_process = INCLUDE_PROCESS_META
+        if include_process_raw is not None:
+            include_process = include_process_raw.lower() in {"1", "true", "yes"}
+        if include_process:
+            return jsonify(search_data)
         return jsonify(search_data["results"])
 
     # ── SPA catch-all LAST ──

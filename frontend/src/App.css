@@ -213,13 +213,18 @@ body {
   gap: 0;
   overflow: hidden;
   transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
-  cursor: default;
+  cursor: pointer;
 }
 
 .card:hover {
   border-color: var(--accent, var(--amber));
   transform: translateY(-2px);
   box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--accent, var(--amber));
+  outline-offset: 2px;
 }
 
 /* -- Card thumbnail --------------------------------------------------------- */
@@ -370,6 +375,12 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.card-more {
+  font-size: 10px;
+  color: var(--amber);
+  font-weight: 700;
 }
 
 /* -- Responsive ------------------------------------------------------------- */

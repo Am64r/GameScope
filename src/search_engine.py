@@ -1,7 +1,7 @@
 """
 TF-IDF search engine — loads prebuilt index from gamescope.db.
 
-No indexing on startup. Run build_db.py once to generate the database.
+When AUTO_BUILD_DB is enabled, missing index artifacts are rebuilt at startup.
 """
 
 import json
@@ -9,10 +9,18 @@ import logging
 import math
 import os
 import pickle
+import re
 import sqlite3
+import subprocess
+import sys
 from collections import Counter, defaultdict
 from heapq import nlargest
 from typing import Dict, List, Optional, Tuple
+
+try:
+    import numpy as np
+except Exception:
+    np = None
 
 from text_utils import clean_text, tokenize, bigrams
 
@@ -23,6 +31,16 @@ SNIPPETS_PER_GAME = 3
 SIMILAR_GAMES_COUNT = 3
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db", "gamescope.db")
+SVD_ALPHA = float(os.environ.get("SVD_ALPHA", "0.7"))
+ENABLE_SVD_SEARCH = os.environ.get("ENABLE_SVD_SEARCH", "1").lower() not in {"0", "false", "no"}
+ENABLE_SVD_EXPLAINABILITY = os.environ.get("ENABLE_SVD_EXPLAINABILITY", "1").lower() not in {"0", "false", "no"}
+ENABLE_NEGATION_QUERY = os.environ.get("ENABLE_NEGATION_QUERY", "0").lower() in {"1", "true", "yes"}
+NEGATION_MODE = os.environ.get("NEGATION_MODE", "soft").lower()
+NEGATION_PATTERN = re.compile(r"\b(?:no|not|without)\s+([a-z0-9]+(?:\s+[a-z0-9]+)?)")
+AUTO_BUILD_DB = os.environ.get("AUTO_BUILD_DB", "1").lower() not in {"0", "false", "no"}
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BUILD_SCRIPT_PATH = os.path.join(PROJECT_ROOT, "scripts", "build_db.py")
+REQUIRED_INDEX_KEYS = ["idf", "postings", "doc_norms", "social_boost", "review_texts"]
 
 
 def _safe_float(val):
@@ -41,7 +59,7 @@ def _get_image_url(game: dict) -> str:
 
 
 class GameSearchEngine:
-    """TF-IDF search with inverted index — loads prebuilt DB, no indexing on startup."""
+    """TF-IDF/SVD search loading prebuilt index with optional auto-build."""
 
     def __init__(self):
         self.games: List[dict] = []
@@ -53,17 +71,43 @@ class GameSearchEngine:
 
         self.tag_index: Dict[str, set] = defaultdict(set)
         self.genre_index: Dict[str, set] = defaultdict(set)
+        self.doc_token_sets: List[set] = []
+
+        self.svd_doc_vecs: Optional[np.ndarray] = None
+        self.svd_term_components: Optional[np.ndarray] = None
+        self.svd_doc_norms: Optional[np.ndarray] = None
+        self.svd_vocab: List[str] = []
+        self.svd_vocab_index: Dict[str, int] = {}
+        self.svd_meta: Dict = {}
+        self.component_top_terms: Dict[int, List[str]] = {}
+        self.svd_enabled = False
 
         self._load_db()
 
     def _load_db(self):
         if not os.path.exists(DB_PATH):
-            raise FileNotFoundError(
-                f"Database not found at {DB_PATH}. Run 'python build_db.py' first."
-            )
+            self._maybe_build_db("database file missing")
+        if not os.path.exists(DB_PATH):
+            raise FileNotFoundError(f"Database not found at {DB_PATH}.")
 
         logger.info("Loading database from %s", DB_PATH)
         conn = sqlite3.connect(DB_PATH)
+        if not self._has_games_table(conn):
+            conn.close()
+            self._maybe_build_db("games table missing")
+            conn = sqlite3.connect(DB_PATH)
+        if not self._has_games_table(conn):
+            conn.close()
+            raise RuntimeError("Unable to load games table from database.")
+        missing_keys = self._missing_required_index_keys(conn)
+        if missing_keys:
+            conn.close()
+            self._maybe_build_db(f"missing index keys: {', '.join(missing_keys)}")
+            conn = sqlite3.connect(DB_PATH)
+            missing_keys = self._missing_required_index_keys(conn)
+        if missing_keys:
+            conn.close()
+            raise RuntimeError(f"Missing required search index keys after build: {', '.join(missing_keys)}")
 
         # Load games
         rows = conn.execute("SELECT idx, data FROM games ORDER BY idx").fetchall()
@@ -83,21 +127,124 @@ class GameSearchEngine:
         self.social_boost = load_blob("social_boost")
         self.review_texts = load_blob("review_texts")
 
+        try:
+            self.svd_doc_vecs = load_blob("svd_doc_vecs_v1")
+            self.svd_term_components = load_blob("svd_term_components_v1")
+            self.svd_doc_norms = load_blob("svd_doc_norms_v1")
+            self.svd_vocab = load_blob("svd_vocab_v1")
+            self.svd_meta = load_blob("svd_meta_v1")
+            self.svd_vocab_index = {term: i for i, term in enumerate(self.svd_vocab)}
+            if (
+                np is not None
+                and
+                isinstance(self.svd_doc_vecs, np.ndarray)
+                and isinstance(self.svd_term_components, np.ndarray)
+                and isinstance(self.svd_doc_norms, np.ndarray)
+                and self.svd_doc_vecs.shape[0] == len(self.games)
+            ):
+                self.svd_enabled = True
+                self._build_component_top_terms()
+        except Exception:
+            self.svd_enabled = False
+
         conn.close()
 
         # Build tag/genre indices (fast, in-memory)
         self._build_tag_genre_indices()
         logger.info("Search engine ready (%d terms in vocabulary)", len(self.idf))
 
+    def _has_games_table(self, conn: sqlite3.Connection) -> bool:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='games'"
+        ).fetchone()
+        if row is None:
+            return False
+        count_row = conn.execute("SELECT COUNT(*) FROM games").fetchone()
+        return bool(count_row and count_row[0] > 0)
+
+    def _missing_required_index_keys(self, conn: sqlite3.Connection) -> List[str]:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='search_index'"
+        ).fetchone()
+        if row is None:
+            return REQUIRED_INDEX_KEYS[:]
+        rows = conn.execute("SELECT key FROM search_index").fetchall()
+        present = {r[0] for r in rows}
+        return [k for k in REQUIRED_INDEX_KEYS if k not in present]
+
+    def _maybe_build_db(self, reason: str) -> None:
+        if not AUTO_BUILD_DB:
+            return
+        if not os.path.exists(BUILD_SCRIPT_PATH):
+            logger.warning("Auto-build skipped; build script missing: %s", BUILD_SCRIPT_PATH)
+            return
+        logger.info("Auto-building search index (%s)", reason)
+        try:
+            subprocess.run(
+                [sys.executable, BUILD_SCRIPT_PATH, "--db", DB_PATH],
+                cwd=PROJECT_ROOT,
+                check=True,
+            )
+        except Exception as exc:
+            logger.exception("Auto-build failed: %s", exc)
+
     def _build_tag_genre_indices(self):
+        self.doc_token_sets = []
         for i, game in enumerate(self.games):
             for tag in (game.get("tags") or {}):
                 self.tag_index[tag.lower()].add(i)
             for genre in game.get("genres") or []:
                 self.genre_index[genre.lower()].add(i)
+            token_set = set(tokenize(clean_text(game.get("name", ""))))
+            token_set.update(tokenize(clean_text(game.get("description", ""))))
+            token_set.update(tokenize(" ".join(game.get("genres") or [])))
+            token_set.update(tokenize(" ".join((game.get("tags") or {}).keys())))
+            self.doc_token_sets.append(token_set)
+
+    def _build_component_top_terms(self, top_n: int = 8):
+        if self.svd_term_components is None or not self.svd_vocab:
+            return
+        for component_idx in range(self.svd_term_components.shape[1]):
+            column = self.svd_term_components[:, component_idx]
+            top_indices = np.argsort(-np.abs(column))[:top_n]
+            self.component_top_terms[component_idx] = [self.svd_vocab[idx] for idx in top_indices]
+
+    def _extract_negated_terms(self, query: str) -> set:
+        matches = NEGATION_PATTERN.findall(query.lower())
+        terms = set()
+        for m in matches:
+            toks = tokenize(m)
+            terms.update(toks)
+            terms.update(bigrams(toks))
+        return terms
+
+    def _doc_negation_hits(self, doc_idx: int, negated_terms: set) -> List[str]:
+        if not negated_terms or doc_idx >= len(self.doc_token_sets):
+            return []
+        token_set = self.doc_token_sets[doc_idx]
+        return sorted(list(negated_terms.intersection(token_set)))
+
+    def _compute_svd_query_vector(self, query_counts: Counter) -> Optional[np.ndarray]:
+        if np is None or not self.svd_enabled or self.svd_term_components is None:
+            return None
+        query_latent = np.zeros(self.svd_term_components.shape[1], dtype=np.float32)
+        used = False
+        for term, count in query_counts.items():
+            if term not in self.svd_vocab_index:
+                continue
+            idf_val = self.idf.get(term, 0.0)
+            if idf_val <= 0:
+                continue
+            weight = (1.0 + math.log(count)) * idf_val
+            query_latent += weight * self.svd_term_components[self.svd_vocab_index[term]]
+            used = True
+        if not used:
+            return None
+        return query_latent
 
     def search(self, query: str, limit: int = 60) -> dict:
         tokens = tokenize(clean_text(query))
+        negated_terms = self._extract_negated_terms(query) if ENABLE_NEGATION_QUERY else set()
         if not tokens:
             return {"results": [], "process": None}
 
@@ -127,6 +274,8 @@ class GameSearchEngine:
             }}
 
         query_norm = math.sqrt(sum(w * w for w in query_weights.values()))
+        svd_query = self._compute_svd_query_vector(query_counts) if ENABLE_SVD_SEARCH else None
+        svd_query_norm = float(np.linalg.norm(svd_query)) if np is not None and svd_query is not None else 0.0
 
         scores = [0.0] * N
         touched = []
@@ -144,7 +293,25 @@ class GameSearchEngine:
 
         def final_score(doc_idx):
             cosine = scores[doc_idx] / (query_norm * self.doc_norms[doc_idx])
-            return cosine * self.social_boost[doc_idx]
+            svd_cosine = 0.0
+            if (
+                svd_query is not None
+                and svd_query_norm > 0
+                and self.svd_doc_vecs is not None
+                and self.svd_doc_norms is not None
+            ):
+                svd_cosine = float(np.dot(svd_query, self.svd_doc_vecs[doc_idx])) / (
+                    svd_query_norm * float(self.svd_doc_norms[doc_idx])
+                )
+            hybrid = cosine
+            if svd_query is not None:
+                hybrid = SVD_ALPHA * cosine + (1.0 - SVD_ALPHA) * svd_cosine
+            neg_hits = self._doc_negation_hits(doc_idx, negated_terms)
+            if neg_hits:
+                if NEGATION_MODE == "strict":
+                    return -1.0
+                hybrid *= 0.65 ** len(neg_hits)
+            return hybrid * self.social_boost[doc_idx]
 
         top = nlargest(limit, touched, key=final_score)
 
@@ -152,7 +319,23 @@ class GameSearchEngine:
         results = []
         for doc_idx in top:
             cosine = scores[doc_idx] / (query_norm * self.doc_norms[doc_idx])
-            boosted = cosine * self.social_boost[doc_idx]
+            svd_cosine = 0.0
+            if (
+                svd_query is not None
+                and svd_query_norm > 0
+                and self.svd_doc_vecs is not None
+                and self.svd_doc_norms is not None
+            ):
+                svd_cosine = float(np.dot(svd_query, self.svd_doc_vecs[doc_idx])) / (
+                    svd_query_norm * float(self.svd_doc_norms[doc_idx])
+                )
+            hybrid = cosine if svd_query is None else SVD_ALPHA * cosine + (1.0 - SVD_ALPHA) * svd_cosine
+            neg_hits = self._doc_negation_hits(doc_idx, negated_terms)
+            if neg_hits:
+                if NEGATION_MODE == "strict":
+                    continue
+                hybrid *= 0.65 ** len(neg_hits)
+            boosted = hybrid * self.social_boost[doc_idx]
             if cosine <= 0:
                 continue
 
@@ -181,8 +364,20 @@ class GameSearchEngine:
                 )),
                 "top_tags": top_tags,
                 "similar_ids": [],
+                "steam_app_id": game.get("steam_app_id"),
+                "steam_url": (
+                    f"https://store.steampowered.com/app/{game.get('steam_app_id')}/"
+                    if game.get("steam_app_id")
+                    else None
+                ),
                 "score": round(boosted, 6),
                 "review_snippets": snippets,
+                "explain": {
+                    "tfidf_score": round(cosine, 6),
+                    "svd_score": round(svd_cosine, 6) if svd_query is not None else None,
+                    "hybrid_score": round(hybrid, 6),
+                    "negation_hits": neg_hits,
+                },
             })
 
         genre_counts: Counter = Counter()
@@ -200,7 +395,28 @@ class GameSearchEngine:
             "docs_scored": len(results),
             "top_genres": [{"name": g, "count": c} for g, c in genre_counts.most_common(8)],
             "top_tags": [{"name": t, "count": c} for t, c in tag_counts.most_common(12)],
+            "svd": None,
+            "negation": {
+                "enabled": ENABLE_NEGATION_QUERY,
+                "mode": NEGATION_MODE,
+                "terms": sorted(list(negated_terms)),
+            },
         }
+
+        if np is not None and ENABLE_SVD_EXPLAINABILITY and svd_query is not None and self.component_top_terms:
+            top_component_indices = np.argsort(-np.abs(svd_query))[:3]
+            process_meta["svd"] = {
+                "enabled": self.svd_enabled,
+                "alpha": SVD_ALPHA,
+                "components": [
+                    {
+                        "component": int(idx),
+                        "weight": round(float(svd_query[idx]), 6),
+                        "top_terms": self.component_top_terms.get(int(idx), []),
+                    }
+                    for idx in top_component_indices
+                ],
+            }
 
         return {"results": results, "process": process_meta}
 
