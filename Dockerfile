@@ -34,6 +34,7 @@ COPY src/ $CONTAINER_HOME/src/
 COPY scripts/ $CONTAINER_HOME/scripts/
 COPY --from=frontend-build /app/frontend/dist $CONTAINER_HOME/frontend/dist
 
-RUN python /var/www/scripts/build_db.py --db /var/www/src/db/gamescope.db --svd-k 96
+RUN mkdir -p /var/www/src/db && \
+    python /var/www/scripts/build_db.py --db /var/www/src/db/gamescope.db --svd-k 96
 
 CMD ["python", "-m", "gunicorn", "--chdir", "src", "app:app", "--bind", "0.0.0.0:5000", "--log-level", "debug", "--timeout", "120"]

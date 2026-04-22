@@ -178,6 +178,9 @@ def main():
     parser.add_argument("--min-df", type=int, default=MIN_DF)
     args = parser.parse_args()
 
+    db_dir = os.path.dirname(args.db)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(args.db)
     games = load_games(conn)
     if not games:
