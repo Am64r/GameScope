@@ -11,6 +11,7 @@ __pycache__/
 dist/
 build/
 *.db
+!src/db/gamescope.db
 
 # Node
 node_modules/
