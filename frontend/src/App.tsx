@@ -3,6 +3,15 @@ import './App.css'
 import { Game, SearchProcessMeta, SearchResponse } from './types'
 import GameDetailModal from './components/GameDetailModal'
 
+interface AiState {
+  modifiedQuery: string | null
+  summary: string
+  streaming: boolean
+  error: string | null
+}
+
+const EMPTY_AI: AiState = { modifiedQuery: null, summary: '', streaming: false, error: null }
+
 function App(): JSX.Element {
   const [useLlm, setUseLlm] = useState<boolean | null>(null)
   const [includeProcessMeta, setIncludeProcessMeta] = useState<boolean>(true)
@@ -12,7 +21,9 @@ function App(): JSX.Element {
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
   const [filterNsfw, setFilterNsfw] = useState<boolean>(true)
   const [loading, setLoading] = useState(false)
+  const [ai, setAi] = useState<AiState>(EMPTY_AI)
   const inputRef = useRef<HTMLInputElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(data => {
@@ -21,32 +32,128 @@ function App(): JSX.Element {
     })
   }, [])
 
+  const cancelInflight = () => {
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    }
+  }
+
+  const runIrSearch = async (value: string, nsfw: boolean): Promise<void> => {
+    setLoading(true)
+    try {
+      const response = await fetch(
+        `/api/games?q=${encodeURIComponent(value)}&include_process=${includeProcessMeta ? '1' : '0'}&nsfw=${nsfw ? '0' : '1'}`,
+      )
+      const data = await response.json()
+      if (Array.isArray(data)) {
+        setGames(data as Game[])
+        setProcessMeta(null)
+      } else {
+        const payload = data as SearchResponse
+        setGames(payload.results ?? [])
+        setProcessMeta(payload.process ?? null)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const runRagSearch = async (value: string, nsfw: boolean): Promise<void> => {
+    cancelInflight()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    setLoading(true)
+    setAi({ modifiedQuery: null, summary: '', streaming: true, error: null })
+
+    try {
+      const response = await fetch('/api/rag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: value,
+          filter_nsfw: nsfw,
+          include_process: includeProcessMeta,
+          limit: 60,
+        }),
+        signal: controller.signal,
+      })
+
+      if (!response.ok || !response.body) {
+        const msg = await response.text().catch(() => '')
+        throw new Error(`RAG request failed (${response.status}) ${msg}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let summary = ''
+      let receivedResults = false
+
+      while (true) {
+        const { done, value: chunk } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(chunk, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          let event: any
+          try { event = JSON.parse(line.slice(6)) } catch { continue }
+
+          if (event.type === 'modified_query') {
+            setAi(prev => ({ ...prev, modifiedQuery: event.modified ?? null }))
+          } else if (event.type === 'search_response') {
+            const payload = event.value as SearchResponse
+            setGames(payload.results ?? [])
+            setProcessMeta(payload.process ?? null)
+            receivedResults = true
+            setLoading(false)
+          } else if (event.type === 'content') {
+            summary += event.value ?? ''
+            setAi(prev => ({ ...prev, summary }))
+          } else if (event.type === 'error') {
+            setAi(prev => ({ ...prev, error: event.value || 'AI summary failed', streaming: false }))
+          } else if (event.type === 'done') {
+            setAi(prev => ({ ...prev, streaming: false }))
+          }
+        }
+      }
+
+      if (!receivedResults) setLoading(false)
+      setAi(prev => ({ ...prev, streaming: false }))
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return
+      console.error(err)
+      setAi(prev => ({ ...prev, error: 'AI is unavailable. Showing IR results only.', streaming: false }))
+      // Fall back to plain IR so the user still sees results
+      await runIrSearch(value, nsfw)
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null
+    }
+  }
+
   const doSearch = async (value: string, nsfw?: boolean): Promise<void> => {
     setSelectedGame(null)
     if (value.trim() === '') {
+      cancelInflight()
       setGames([])
       setProcessMeta(null)
+      setAi(EMPTY_AI)
       return
     }
     const nsfwFlag = nsfw ?? filterNsfw
-    setLoading(true)
-    const response = await fetch(`/api/games?q=${encodeURIComponent(value)}&include_process=${includeProcessMeta ? '1' : '0'}&nsfw=${nsfwFlag ? '0' : '1'}`)
-    const data = await response.json()
-    if (Array.isArray(data)) {
-      setGames(data as Game[])
-      setProcessMeta(null)
+    if (useLlm) {
+      await runRagSearch(value, nsfwFlag)
     } else {
-      const payload = data as SearchResponse
-      setGames(payload.results ?? [])
-      setProcessMeta(payload.process ?? null)
+      setAi(EMPTY_AI)
+      await runIrSearch(value, nsfwFlag)
     }
-    setLoading(false)
   }
 
   const handleSubmit = () => { doSearch(searchTerm) }
-
   const handlePill = (q: string) => { setSearchTerm(q); doSearch(q) }
-
   const handleNsfwToggle = (checked: boolean) => {
     setFilterNsfw(checked)
     if (searchTerm.trim()) doSearch(searchTerm, checked)
@@ -55,6 +162,7 @@ function App(): JSX.Element {
   if (useLlm === null) return <></>
 
   const hasResults = games.length > 0
+  const hasAi = ai.modifiedQuery !== null || ai.summary.length > 0 || ai.streaming || ai.error !== null
 
   return (
     <div className="landing">
@@ -99,12 +207,34 @@ function App(): JSX.Element {
 
         {!hasResults && (
           <div className="pill-row">
-            {['open world RPG', 'cozy puzzle', 'multiplayer shooter', 'indie platformer', 'horror survival'].map(q => (
+            {['chill puzzle no combat', 'open world fantasy RPG', 'cozy multiplayer with friends', 'spooky atmospheric horror', 'rainy day relaxing'].map(q => (
               <button key={q} className="pill" onClick={() => handlePill(q)}>{q}</button>
             ))}
           </div>
         )}
       </div>
+
+      {/* AI Summary panel — sits between search and cards (per RAG diagram) */}
+      {hasAi && (
+        <div className="ai-panel">
+          <div className="ai-panel-header">
+            <span className="ai-badge">AI Overview</span>
+            {ai.modifiedQuery && (
+              <span className="ai-modified-query">
+                searched for <em>“{ai.modifiedQuery}”</em>
+              </span>
+            )}
+          </div>
+          {ai.error ? (
+            <p className="ai-error">{ai.error}</p>
+          ) : (
+            <p className="ai-summary">
+              {ai.summary || (ai.streaming ? 'Thinking…' : '')}
+              {ai.streaming && <span className="ai-cursor">▍</span>}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Results */}
       {hasResults && (

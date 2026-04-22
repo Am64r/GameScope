@@ -7,7 +7,6 @@ gunicorn==25.0.3
 python-dotenv
 numpy
 scipy
-anthropic
 nltk
 vaderSentiment
 git+https://github.com/MrPeterss/infosci-spark-client.git

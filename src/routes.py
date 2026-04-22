@@ -1,10 +1,11 @@
 """
-Routes: Thin Flask API delegating to search_engine.py.
+Routes: Thin Flask API delegating to search_engine.py and llm_routes.py.
 
 Endpoints:
-- GET /api/games?q=...       — search games
-- GET /api/config             — frontend config
-- GET /* — serve React SPA
+- GET  /api/games?q=...  — pure IR search (TF-IDF + SVD)
+- POST /api/rag          — RAG: LLM rewrites query, IR runs, LLM streams grounded answer (SSE)
+- GET  /api/config       — frontend config
+- GET  /*                — serve React SPA
 """
 
 import logging
@@ -12,9 +13,10 @@ import os
 
 from flask import jsonify, request, send_from_directory
 
+from llm_routes import LLM_API_KEY_ENV, register_rag_route
 from search_engine import GameSearchEngine
 
-USE_LLM = os.environ.get("ANTHROPIC_API_KEY") is not None
+USE_LLM = os.environ.get(LLM_API_KEY_ENV) is not None
 INCLUDE_PROCESS_META = os.environ.get("INCLUDE_PROCESS_META", "1").lower() not in {"0", "false", "no"}
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,14 @@ def register_routes(app):
         if include_process:
             return jsonify(search_data)
         return jsonify(search_data["results"])
+
+    if USE_LLM:
+        register_rag_route(app, SEARCH_ENGINE)
+    else:
+        logger.warning(
+            "%s not set; /api/rag disabled. Front-end will fall back to /api/games.",
+            LLM_API_KEY_ENV,
+        )
 
     # ── SPA catch-all LAST ──
 
