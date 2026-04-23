@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkBreaks from 'remark-breaks'
 import './App.css'
 import { Game, SearchProcessMeta, SearchResponse } from './types'
 import GameDetailModal from './components/GameDetailModal'
@@ -228,10 +230,21 @@ function App(): JSX.Element {
           {ai.error ? (
             <p className="ai-error">{ai.error}</p>
           ) : (
-            <p className="ai-summary">
-              {ai.summary || (ai.streaming ? 'Thinking…' : '')}
-              {ai.streaming && <span className="ai-cursor">▍</span>}
-            </p>
+            <div className="ai-summary">
+              {ai.summary ? (
+                <>
+                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>{ai.summary}</ReactMarkdown>
+                  {ai.streaming && <span className="ai-cursor">▍</span>}
+                </>
+              ) : (
+                ai.streaming && (
+                  <>
+                    Thinking…
+                    <span className="ai-cursor">▍</span>
+                  </>
+                )
+              )}
+            </div>
           )}
         </div>
       )}

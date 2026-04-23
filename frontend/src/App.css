@@ -46,7 +46,7 @@ body {
   filter: drop-shadow(0 4px 32px var(--amber-glow));
 }
 
-.hero--compact .brand { font-size: 32px; letter-spacing: -1px; margin-bottom: 0; }
+.hero--compact .brand { font-size: 32px; letter-spacing: -1px; margin-bottom: 24px; }
 
 .brand span { color: var(--amber); }
 .brand span:nth-child(odd) { color: var(--coin-gold); }
@@ -222,7 +222,19 @@ body {
   font-size: 15px;
   line-height: 1.55;
   color: var(--text-primary, #e5e7eb);
-  white-space: pre-wrap;
+}
+
+.ai-summary p {
+  margin: 0 0 0.5em;
+}
+
+.ai-summary p:last-of-type {
+  margin-bottom: 0;
+}
+
+.ai-summary strong {
+  font-weight: 700;
+  color: var(--text-primary, #e5e7eb);
 }
 
 .ai-cursor {
