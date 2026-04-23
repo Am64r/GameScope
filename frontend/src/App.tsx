@@ -161,6 +161,16 @@ function App(): JSX.Element {
     if (searchTerm.trim()) doSearch(searchTerm, checked)
   }
 
+  const goHome = () => {
+    cancelInflight()
+    setSearchTerm('')
+    setGames([])
+    setProcessMeta(null)
+    setSelectedGame(null)
+    setAi(EMPTY_AI)
+    inputRef.current?.focus()
+  }
+
   if (useLlm === null) return <></>
 
   const hasResults = games.length > 0
@@ -170,7 +180,13 @@ function App(): JSX.Element {
     <div className="landing">
       {/* Hero */}
       <div className={`hero ${hasResults ? 'hero--compact' : ''}`}>
-        <div className="brand" onClick={() => inputRef.current?.focus()}>
+        <div
+          className="brand"
+          onClick={goHome}
+          role="button"
+          tabIndex={0}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goHome() } }}
+        >
           <span className="brand-g">G</span>
           <span className="brand-a">a</span>
           <span className="brand-m">m</span>
