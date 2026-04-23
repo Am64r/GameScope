@@ -12,5 +12,9 @@
     "flask",
     "react",
     "template"
-  ]
+  ],
+  "dependencies": {
+    "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0"
+  }
 }

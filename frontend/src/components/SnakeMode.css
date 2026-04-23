@@ -1,0 +1,524 @@
+/* ---- Snake Mode ---------------------------------------------------------- */
+
+.snake-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: snake-fade 0.18s ease-out;
+}
+
+@keyframes snake-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.snake-modal {
+  width: min(1320px, 100%);
+  max-height: calc(100vh - 48px);
+  background: var(--bg-card, #12161d);
+  border: 1px solid var(--border, #2a303b);
+  border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 186, 8, 0.08);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: snake-pop 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+@keyframes snake-pop {
+  from { transform: translateY(10px) scale(0.98); opacity: 0; }
+  to   { transform: translateY(0) scale(1);       opacity: 1; }
+}
+
+/* Header */
+.snake-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border, #2a303b);
+  gap: 12px;
+}
+
+.snake-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--amber, #ffba08);
+  text-transform: uppercase;
+}
+
+.snake-emoji { font-size: 18px; filter: drop-shadow(0 0 6px rgba(255,186,8,0.4)); }
+
+.snake-query {
+  color: var(--text-muted, #8b94a3);
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  text-transform: none;
+  font-size: 12px;
+}
+
+.snake-query em {
+  color: var(--text-primary, #fff);
+  font-style: normal;
+}
+
+.snake-hud {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.snake-stat {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--text-muted, #8b94a3);
+}
+
+.snake-stat b {
+  color: var(--amber, #ffba08);
+  font-size: 16px;
+  margin: 0 2px;
+}
+
+.snake-close {
+  background: transparent;
+  border: 1px solid var(--border, #2a303b);
+  color: var(--text-muted, #8b94a3);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.snake-close:hover {
+  color: var(--amber, #ffba08);
+  border-color: var(--amber, #ffba08);
+  background: rgba(255,186,8,0.06);
+}
+
+/* Layout */
+.snake-layout {
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  gap: 16px;
+  padding: 16px;
+  min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 860px) {
+  .snake-layout { grid-template-columns: 1fr; }
+  .snake-side { order: -1; }
+}
+
+/* Board */
+.snake-board {
+  position: relative;
+  display: grid;
+  background:
+    radial-gradient(ellipse at center, rgba(255,186,8,0.04), transparent 70%),
+    #0a0d13;
+  border: 1px solid var(--border, #2a303b);
+  border-radius: 12px;
+  overflow: hidden;
+  width: 100%;
+  box-shadow: inset 0 0 40px rgba(0,0,0,0.6);
+}
+
+.snake-board::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: calc(100% / 24) calc(100% / 15);
+  pointer-events: none;
+}
+
+.snake-scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255,255,255,0.02) 0 1px,
+    transparent 1px 3px
+  );
+  mix-blend-mode: overlay;
+  opacity: 0.6;
+}
+
+/* Snake cells — amber/yellow on-brand */
+.snake-cell {
+  background: linear-gradient(135deg, #ffba08, #d97706);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
+  margin: 1px;
+  z-index: 2;
+}
+
+.snake-head {
+  background: linear-gradient(135deg, #fde68a, #f59e0b);
+  box-shadow:
+    0 0 14px rgba(255, 186, 8, 0.75),
+    0 0 28px rgba(255, 186, 8, 0.35),
+    inset 0 0 0 1px rgba(0,0,0,0.45);
+  z-index: 3;
+}
+
+/* Food (game thumbnails) — green target, complements amber snake */
+.snake-food {
+  position: relative;
+  margin: 2px;
+  border-radius: 4px;
+  /* image stays clipped but the nametag can bleed outside */
+  z-index: 1;
+  animation: snake-food-pulse 1.6s ease-in-out infinite;
+  box-shadow:
+    0 0 0 2px rgba(74,222,128,0.55),
+    0 0 16px rgba(74,222,128,0.4);
+}
+
+.snake-food img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 4px;
+}
+
+.snake-food-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: rgba(74,222,128,0.18);
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.snake-food-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
+  pointer-events: none;
+}
+
+@keyframes snake-food-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 2px rgba(74,222,128,0.5), 0 0 12px rgba(74,222,128,0.35);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 0 2px rgba(74,222,128,0.85), 0 0 22px rgba(74,222,128,0.6);
+  }
+}
+
+/* Floating nametag tethered to the current food */
+.snake-food-label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(6, 8, 12, 0.92);
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  color: #e5e7eb;
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  z-index: 6;
+  pointer-events: none;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.55), 0 0 10px rgba(74,222,128,0.25);
+  animation: snake-label-bob 1.6s ease-in-out infinite;
+}
+
+.snake-food-label::after {
+  /* little pointer arrow down toward the food */
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: rgba(74, 222, 128, 0.55);
+}
+
+.snake-food-label--below {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+.snake-food-label--below::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: rgba(74, 222, 128, 0.55);
+}
+
+.snake-food-rank {
+  font-weight: 900;
+  color: #4ade80;
+  letter-spacing: 1px;
+}
+
+.snake-food-name {
+  font-weight: 600;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes snake-label-bob {
+  0%, 100% { transform: translate(-50%, 0); }
+  50%      { transform: translate(-50%, -2px); }
+}
+
+/* HUD "NEXT" chip shows current target name */
+.snake-next {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: #86efac;
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  padding: 4px 10px;
+  border-radius: 20px;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snake-next b {
+  color: #bbf7d0;
+  font-weight: 800;
+  margin: 0 2px;
+}
+
+/* Overlays */
+.snake-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.78);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  text-align: center;
+  padding: 20px;
+}
+
+.snake-overlay > div {
+  max-width: 380px;
+}
+
+.snake-overlay-title {
+  font-size: 32px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  color: var(--amber, #ffba08);
+  text-shadow: 0 0 18px rgba(255,186,8,0.55);
+  margin-bottom: 10px;
+}
+
+.snake-overlay p {
+  color: var(--text-muted, #8b94a3);
+  font-size: 14px;
+  margin: 6px 0;
+}
+
+.snake-hint {
+  font-size: 11px;
+  letter-spacing: 1px;
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.snake-overlay-won .snake-overlay-title {
+  color: #4ade80;
+  text-shadow: 0 0 20px rgba(74,222,128,0.6);
+}
+
+.snake-overlay-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.snake-btn {
+  background: var(--amber, #ffba08);
+  color: #111;
+  border: none;
+  font-weight: 800;
+  letter-spacing: 2px;
+  font-size: 12px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.15s, filter 0.15s;
+}
+.snake-btn:hover { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 6px 18px rgba(255,186,8,0.3); }
+.snake-btn:active { transform: translateY(0); }
+
+.snake-btn-ghost {
+  background: transparent;
+  color: var(--text-muted, #8b94a3);
+  border: 1px solid var(--border, #2a303b);
+}
+.snake-btn-ghost:hover {
+  color: var(--amber, #ffba08);
+  border-color: var(--amber, #ffba08);
+  background: rgba(255,186,8,0.05);
+}
+
+/* Side panel */
+.snake-side {
+  background: var(--bg-surface, #0f1319);
+  border: 1px solid var(--border, #2a303b);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.snake-side h4 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--text-muted, #8b94a3);
+  text-transform: uppercase;
+}
+
+.snake-collected {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.snake-collected li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-muted, #8b94a3);
+  opacity: 0.55;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.snake-collected li.got {
+  color: var(--text-primary, #fff);
+  opacity: 1;
+  background: rgba(74, 222, 128, 0.08);
+  cursor: pointer;
+}
+
+.snake-collected li.got:hover {
+  background: rgba(74, 222, 128, 0.14);
+}
+
+.snake-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.snake-collected li.got .snake-dot {
+  background: #4ade80;
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(74,222,128,0.7);
+}
+
+.snake-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snake-foot {
+  margin: 10px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--text-muted, #8b94a3);
+  opacity: 0.6;
+  letter-spacing: 1px;
+}
+
+/* ---- Launcher button (shown on results page) -----------------------------
+   Mirrors .search-btn shape/typography but in green. */
+
+.snake-launch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: #4ade80;
+  color: #0a0d13;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s, transform 0.1s, box-shadow 0.2s;
+}
+
+.snake-launch:hover {
+  background: #86efac;
+  box-shadow: 0 0 18px rgba(74, 222, 128, 0.35);
+  transform: translateY(-1px);
+}
+
+.snake-launch:active {
+  transform: translateY(0);
+}
+
+.snake-launch-icon {
+  width: 14px;
+  height: 14px;
+  /* keep pixel edges crisp */
+  image-rendering: pixelated;
+  shape-rendering: crispEdges;
+}
+
+.snake-launch-icon rect {
+  fill: #0a0d13;
+}

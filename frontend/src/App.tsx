@@ -4,6 +4,8 @@ import remarkBreaks from 'remark-breaks'
 import './App.css'
 import { Game, SearchProcessMeta, SearchResponse } from './types'
 import GameDetailModal from './components/GameDetailModal'
+import SnakeMode from './components/SnakeMode'
+import BackgroundBlocks from './components/BackgroundBlocks'
 
 interface AiState {
   modifiedQuery: string | null
@@ -24,6 +26,7 @@ function App(): JSX.Element {
   const [filterNsfw, setFilterNsfw] = useState<boolean>(true)
   const [loading, setLoading] = useState(false)
   const [ai, setAi] = useState<AiState>(EMPTY_AI)
+  const [snakeOpen, setSnakeOpen] = useState<boolean>(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -178,6 +181,7 @@ function App(): JSX.Element {
 
   return (
     <div className="landing">
+      {!hasResults && <BackgroundBlocks />}
       {/* Hero */}
       <div className={`hero ${hasResults ? 'hero--compact' : ''}`}>
         <div
@@ -270,6 +274,23 @@ function App(): JSX.Element {
         <div className="results">
           <div className="results-header">
             <span className="results-count">{games.length} results for <em>"{searchTerm}"</em></span>
+            <button
+              className="snake-launch"
+              onClick={() => setSnakeOpen(true)}
+              title="Play the top results as a snake game"
+              aria-label="Snake Mode"
+            >
+              <svg className="snake-launch-icon" viewBox="0 0 16 16" aria-hidden>
+                {/* pixel-art S-tetromino — our snake shape */}
+                <rect x="6"  y="1" width="4" height="4" />
+                <rect x="11" y="1" width="4" height="4" />
+                <rect x="1"  y="6" width="4" height="4" />
+                <rect x="6"  y="6" width="4" height="4" />
+                {/* tail pixel */}
+                <rect x="1" y="11" width="4" height="4" opacity="0.55" />
+              </svg>
+              Snake Mode
+            </button>
           </div>
 
           <div className="cards">
@@ -335,6 +356,14 @@ function App(): JSX.Element {
           query={searchTerm}
           onClose={() => setSelectedGame(null)}
           processMeta={processMeta}
+        />
+      )}
+      {snakeOpen && (
+        <SnakeMode
+          games={games}
+          query={searchTerm}
+          onClose={() => setSnakeOpen(false)}
+          onPickGame={(g) => setSelectedGame(g)}
         />
       )}
     </div>

@@ -14,6 +14,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  position: relative;
 }
 
 /* -- Hero ------------------------------------------------------------------- */
@@ -23,6 +24,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  position: relative;
+  z-index: 1;
   justify-content: center;
   padding: 100px 20px 60px;
   background: radial-gradient(ellipse 80% 60% at 50% 0%, #2a2210 0%, var(--bg-deep) 100%);
@@ -179,6 +182,8 @@ body {
   margin: 0 auto 24px;
   padding: 18px 22px;
   border-radius: 14px;
+  position: relative;
+  z-index: 1;
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(139, 92, 246, 0.08));
   border: 1px solid rgba(245, 158, 11, 0.25);
   box-shadow: 0 0 24px rgba(245, 158, 11, 0.08);
@@ -265,6 +270,8 @@ body {
   width: 100%;
   max-width: 1100px;
   padding: 0 24px 60px;
+  position: relative;
+  z-index: 1;
 }
 
 .results-header {
@@ -307,8 +314,8 @@ body {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 18px;
 }
 
 .card {
@@ -316,6 +323,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 14px;
   display: flex;
+  flex-direction: column;
   gap: 0;
   overflow: hidden;
   transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
@@ -336,9 +344,21 @@ body {
 /* -- Card thumbnail --------------------------------------------------------- */
 
 .card-thumb {
-  width: 90px;
+  width: 100%;
+  aspect-ratio: 460 / 215; /* Steam header art ratio */
   flex-shrink: 0;
   position: relative;
+  background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(0,0,0,0.25));
+  overflow: hidden;
+}
+
+.card-thumb::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 45%;
+  background: linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0));
+  pointer-events: none;
 }
 
 .card-thumb img {
@@ -346,6 +366,11 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
+  transition: transform 0.4s ease;
+}
+
+.card:hover .card-thumb img {
+  transform: scale(1.04);
 }
 
 .card-thumb-empty {
@@ -354,18 +379,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 130px;
 }
 
 .card-score {
   position: absolute;
-  bottom: 6px;
-  left: 6px;
-  background: rgba(0,0,0,0.7);
+  bottom: 8px;
+  left: 8px;
+  z-index: 1;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(6px);
   color: var(--amber);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 800;
-  padding: 2px 5px;
+  padding: 3px 7px;
   border-radius: 4px;
   letter-spacing: 0.5px;
 }
@@ -374,10 +400,10 @@ body {
 
 .card-body {
   flex: 1;
-  padding: 14px 16px;
+  padding: 14px 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -408,13 +434,14 @@ body {
 .source-both   { background: var(--amber-dim); color: var(--bg-deep); }
 
 .card-name {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.3;
+  margin: 2px 0 0;
 }
 
 .card-meta {

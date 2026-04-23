@@ -1,0 +1,50 @@
+.bg-blocks {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  /* soft fade at the very edges so blocks never touch the viewport border */
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 70%, transparent 100%);
+          mask-image: radial-gradient(ellipse at center, #000 70%, transparent 100%);
+}
+
+.bg-block {
+  position: absolute;
+  border-radius: 0;                 /* crisp pixel square */
+  background: var(--amber, #ffba08); /* solid amber — one color */
+  opacity: 0.08;                    /* always visible floor — no hard on/off */
+  animation-iteration-count: infinite;
+  animation-direction: alternate;    /* smooth breathe back-and-forth, no reset pop */
+  animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1); /* gentle sine-like curve */
+  will-change: opacity;
+  box-shadow: 0 0 4px rgba(255, 186, 8, 0.18);
+}
+
+/* Slow, steady breathe — most of the grid. */
+.bg-block--slow {
+  animation-name: bg-block-breathe;
+}
+
+/* Slightly more active breathe — ~12% of blocks. */
+.bg-block--fast {
+  animation-name: bg-block-breathe-bright;
+}
+
+@keyframes bg-block-breathe {
+  from { opacity: 0.06; }
+  to   { opacity: 0.22; }
+}
+
+@keyframes bg-block-breathe-bright {
+  from { opacity: 0.08; }
+  to   { opacity: 0.30; }
+}
+
+/* Respect users who've asked for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .bg-block {
+    animation: none;
+    opacity: 0.12;
+  }
+}
