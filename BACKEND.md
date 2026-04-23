@@ -213,6 +213,37 @@ Top reviews are selected independently of the query:
 
 ---
 
+## RAG Pipeline (`llm_routes.py`)
+
+When `SPARK_API_KEY` is set, `POST /api/rag` runs a four-step streaming pipeline:
+
+1. **Title grounding** — a title-only TF-IDF index returns the top-N catalog titles for the raw user query. When the top cosine clears `TITLE_CANDIDATE_THRESHOLD`, those names are injected into the rewrite prompt so the LLM can preserve exact titles (e.g. "call of duty") instead of paraphrasing them into generic genre words.
+2. **Query rewrite (LLM call #1)** — rewrites the request into 3–10 IR-friendly keywords. System prompt requires proper nouns / candidate titles to be preserved verbatim.
+3. **Retrieval** — runs `GameSearchEngine.search()` on the concatenation of the original query and the rewrite, so original tokens (especially titles) can't be dropped by the LLM.
+4. **Answer streaming (LLM call #2)** — streams a grounded recommendation over SSE, citing games from the top-K retrieved context.
+
+### Title Index
+
+Built in-memory at startup (not persisted to `gamescope.db`); shares the `text_utils` tokenizer with the main index.
+
+| Structure | Type | Description |
+|-----------|------|-------------|
+| `title_idf` | `dict[str, float]` | Smoothed IDF over name tokens only |
+| `title_postings` | `dict[str, list[tuple[int, float]]]` | Term → (doc_index, weight) over titles |
+| `title_doc_norms` | `list[float]` | L2 norm per title |
+
+`search_titles(query, limit)` ranks candidates by `title_cosine × social_boost` (popular franchise entries surface first) and returns raw cosine as `score` so callers can gate on a semantic threshold.
+
+### Environment Knobs
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `SPARK_API_KEY` | — | Enables `/api/rag` and LLM calls |
+| `TITLE_CANDIDATE_LIMIT` | 20 | Max candidates injected into rewrite prompt |
+| `TITLE_CANDIDATE_THRESHOLD` | 0.15 | Min top-candidate cosine to trigger injection |
+
+---
+
 ## Database Schema
 
 ```sql

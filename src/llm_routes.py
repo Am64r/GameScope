@@ -18,6 +18,7 @@ SSE events emitted by /api/rag:
 import json
 import logging
 import os
+from typing import List, Optional
 
 from flask import Response, jsonify, request, stream_with_context
 
@@ -28,12 +29,20 @@ logger = logging.getLogger(__name__)
 LLM_API_KEY_ENV = "SPARK_API_KEY"
 RAG_CONTEXT_LIMIT = 10  # how many games to feed into the summary LLM
 
+TITLE_CANDIDATE_LIMIT = int(os.getenv("TITLE_CANDIDATE_LIMIT", "20"))
+TITLE_CANDIDATE_THRESHOLD = float(os.getenv("TITLE_CANDIDATE_THRESHOLD", "0.15"))
+
 REWRITE_SYSTEM_PROMPT = (
     "You rewrite natural-language video-game search requests into a short keyword query "
     "for a TF-IDF + SVD search engine over a catalogue of 5000 games (Steam + Amazon).\n"
     "Rules:\n"
     "- Output 3 to 10 lowercase keywords or short phrases separated by spaces.\n"
     "- Capture genre, mechanics, mood/vibe, themes, and platform when implied.\n"
+    "- If the user names a specific game, franchise, studio, or other proper noun, "
+    "preserve it verbatim in your output. Never paraphrase it into generic genre words.\n"
+    "- If a 'Catalog candidates' list is provided and the user's request clearly refers "
+    "to one of them, include that exact title verbatim in your output. Do NOT invent "
+    "titles that aren't in the list.\n"
     "- Preserve negations using the literal form 'no X' (e.g. 'no combat', 'no horror'). "
     "The search engine has a negation handler that depends on this format.\n"
     "- Do NOT invent constraints the user didn't imply.\n"
@@ -92,20 +101,42 @@ def _build_context_block(results: list, limit: int = RAG_CONTEXT_LIMIT) -> str:
     return "\n\n".join(lines)
 
 
-def _rewrite_query(client: LLMClient, user_query: str) -> str:
-    """LLM call #1: turn natural language into keywords for the IR engine."""
+def _format_title_candidates(candidates: List[dict]) -> str:
+    names = [c.get("name", "") for c in candidates if c.get("name")]
+    return "\n".join(f"- {n}" for n in names)
+
+
+def _rewrite_query(
+    client: LLMClient,
+    user_query: str,
+    candidates: Optional[List[dict]] = None,
+) -> str:
+    """LLM call #1: turn natural language into keywords for the IR engine.
+
+    When `candidates` is non-empty, the closest title matches from the catalog
+    are injected into the user message so the model can preserve an exact
+    catalog title verbatim instead of paraphrasing it into generic genre words.
+    """
+    if candidates:
+        user_content = (
+            f"User request: {user_query}\n\n"
+            f"Catalog candidates (closest title matches in our catalogue; "
+            f"only use one if the user is clearly referring to it):\n"
+            f"{_format_title_candidates(candidates)}"
+        )
+    else:
+        user_content = user_query
+
     messages = [
         {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
-        {"role": "user", "content": user_query},
+        {"role": "user", "content": user_content},
     ]
     try:
         response = client.chat(messages, stream=False)
         text = (response.get("content") or "").strip()
-        # Strip wrapping quotes / leading "Query:" if model adds them
         text = text.strip("\"'`")
         if ":" in text and len(text.split(":", 1)[0]) < 20:
             text = text.split(":", 1)[1].strip()
-        # Collapse to one line
         text = " ".join(text.split())
         if not text:
             return user_query
@@ -141,18 +172,35 @@ def register_rag_route(app, search_engine):
         client = LLMClient(api_key=api_key)
 
         def generate():
-            # Step 1 — LLM rewrites the query
-            modified_query = _rewrite_query(client, user_query)
+            # Step 0 — ground the rewriter with closest catalog titles (if any)
+            candidates: List[dict] = []
+            try:
+                title_hits = search_engine.search_titles(
+                    user_query, limit=TITLE_CANDIDATE_LIMIT
+                )
+                if title_hits and title_hits[0].get("score", 0.0) >= TITLE_CANDIDATE_THRESHOLD:
+                    candidates = title_hits
+            except Exception as exc:
+                logger.warning("Title candidate lookup failed: %s", exc)
+
+            # Step 1 — LLM rewrites the query (with catalog grounding when available)
+            modified_query = _rewrite_query(client, user_query, candidates)
             yield _sse({
                 "type": "modified_query",
                 "original": user_query,
                 "modified": modified_query,
             })
 
-            # Step 2 — IR runs on the modified query
+            # Step 2 — IR runs on the combined (original + rewritten) query so
+            # original tokens (esp. proper nouns) can never be dropped by the LLM.
+            ir_query = (
+                f"{user_query} {modified_query}"
+                if modified_query and modified_query != user_query
+                else user_query
+            )
             try:
                 search_data = search_engine.search(
-                    modified_query, limit=limit, filter_nsfw=filter_nsfw
+                    ir_query, limit=limit, filter_nsfw=filter_nsfw
                 )
             except Exception as exc:
                 logger.exception("IR search failed: %s", exc)

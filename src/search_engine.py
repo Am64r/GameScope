@@ -90,6 +90,10 @@ class GameSearchEngine:
         self.genre_index: Dict[str, set] = defaultdict(set)
         self.doc_token_sets: List[set] = []
 
+        self.title_idf: Dict[str, float] = {}
+        self.title_postings: Dict[str, List[Tuple[int, float]]] = defaultdict(list)
+        self.title_doc_norms: List[float] = []
+
         self.svd_doc_vecs: Optional[np.ndarray] = None
         self.svd_term_components: Optional[np.ndarray] = None
         self.svd_doc_norms: Optional[np.ndarray] = None
@@ -179,6 +183,7 @@ class GameSearchEngine:
 
         # Build tag/genre indices (fast, in-memory)
         self._build_tag_genre_indices()
+        self._build_title_index()
         logger.info("Search engine ready (%d terms in vocabulary)", len(self.idf))
 
     def _has_games_table(self, conn: sqlite3.Connection) -> bool:
@@ -235,6 +240,114 @@ class GameSearchEngine:
             token_set.update(tokenize(" ".join(game.get("genres") or [])))
             token_set.update(tokenize(" ".join((game.get("tags") or {}).keys())))
             self.doc_token_sets.append(token_set)
+
+    def _build_title_index(self):
+        """Build a small TF-IDF index over game names only.
+
+        Used by `search_titles()` to produce candidate titles for the LLM query
+        rewriter. Separate from the main index so it isn't polluted by description,
+        tag, or review tokens.
+        """
+        N = len(self.games)
+        self.title_idf = {}
+        self.title_postings = defaultdict(list)
+        self.title_doc_norms = [0.0] * N
+        if N == 0:
+            return
+
+        doc_tfs: List[Counter] = [Counter() for _ in range(N)]
+        df: Counter = Counter()
+        for i, game in enumerate(self.games):
+            name = game.get("name") or ""
+            toks = tokenize(clean_text(name))
+            if not toks:
+                continue
+            terms = toks + bigrams(toks)
+            tf = Counter(terms)
+            doc_tfs[i] = tf
+            for term in tf.keys():
+                df[term] += 1
+
+        self.title_idf = {
+            term: math.log((N + 1) / (df_val + 1)) + 1.0
+            for term, df_val in df.items()
+        }
+
+        for i, tf in enumerate(doc_tfs):
+            if not tf:
+                continue
+            norm_sq = 0.0
+            for term, count in tf.items():
+                idf_val = self.title_idf.get(term, 0.0)
+                if idf_val <= 0:
+                    continue
+                weight = (1.0 + math.log(count)) * idf_val
+                if weight > 0:
+                    self.title_postings[term].append((i, weight))
+                    norm_sq += weight * weight
+            self.title_doc_norms[i] = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
+
+        logger.info(
+            "Title index built: %d terms across %d titled games",
+            len(self.title_idf),
+            sum(1 for n in self.title_doc_norms if n > 0),
+        )
+
+    def search_titles(self, query: str, limit: int = 20) -> List[dict]:
+        """Return top title-only matches for `query`.
+
+        Ranked by (title cosine × social_boost) so popular franchise entries
+        surface first; `score` is the raw cosine (0..1) so callers can gate on
+        a semantic threshold. Returns [] when no query token is in the title
+        vocabulary.
+        """
+        tokens = tokenize(clean_text(query))
+        if not tokens:
+            return []
+        query_counts = Counter(tokens + bigrams(tokens))
+
+        query_weights: Dict[str, float] = {}
+        for term, count in query_counts.items():
+            idf_val = self.title_idf.get(term, 0.0)
+            if idf_val > 0:
+                query_weights[term] = (1.0 + math.log(count)) * idf_val
+
+        if not query_weights:
+            return []
+
+        query_norm = math.sqrt(sum(w * w for w in query_weights.values()))
+        if query_norm <= 0:
+            return []
+
+        scores: Dict[int, float] = defaultdict(float)
+        for term, qw in query_weights.items():
+            for doc_idx, doc_weight in self.title_postings.get(term, []):
+                scores[doc_idx] += qw * doc_weight
+
+        if not scores:
+            return []
+
+        def ranked_score(doc_idx: int) -> float:
+            doc_norm = self.title_doc_norms[doc_idx] or 1.0
+            cosine = scores[doc_idx] / (query_norm * doc_norm)
+            boost = self.social_boost[doc_idx] if doc_idx < len(self.social_boost) else 1.0
+            return cosine * boost
+
+        top_indices = nlargest(limit, scores.keys(), key=ranked_score)
+
+        results: List[dict] = []
+        for doc_idx in top_indices:
+            doc_norm = self.title_doc_norms[doc_idx] or 1.0
+            cosine = scores[doc_idx] / (query_norm * doc_norm)
+            if cosine <= 0:
+                continue
+            game = self.games[doc_idx]
+            results.append({
+                "id": game.get("id", ""),
+                "name": game.get("name", ""),
+                "score": round(cosine, 6),
+            })
+        return results
 
     def _build_component_top_terms(self, top_n: int = 8):
         if self.svd_term_components is None or not self.svd_vocab:
