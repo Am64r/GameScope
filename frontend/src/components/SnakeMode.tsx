@@ -46,7 +46,6 @@ function SnakeMode({ games, query, onClose, onPickGame }: Props): JSX.Element {
 
   const [snake, setSnake] = useState<Cell[]>(initialSnake)
   const [food, setFood] = useState<Food | null>(null)
-  const [nextRank, setNextRank] = useState<number>(0)
   const [collected, setCollected] = useState<Game[]>([])
   const [status, setStatus] = useState<'idle' | 'playing' | 'over' | 'won'>('idle')
   const [tickMs, setTickMs] = useState<number>(TICK_MS)
@@ -71,7 +70,6 @@ function SnakeMode({ games, query, onClose, onPickGame }: Props): JSX.Element {
     queuedDirection.current = null
     setCollected([])
     setTickMs(TICK_MS)
-    setNextRank(0)
     placeFoodForRank(0, initialSnake)
     setStatus('idle')
   }, [initialSnake, placeFoodForRank])
@@ -144,7 +142,6 @@ function SnakeMode({ games, query, onClose, onPickGame }: Props): JSX.Element {
           setCollected(c => [...c, eatenGame])
           setTickMs(ms => Math.max(MIN_TICK_MS, ms - 4))
           const newRank = food.rank + 1
-          setNextRank(newRank)
           if (newRank >= topGames.length) {
             setFood(null)
             setStatus('won')
